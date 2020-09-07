@@ -1,7 +1,9 @@
-''' Evaluation of agent trajectories '''
+""" Evaluation of agent trajectories """
 
 import json
-import pprint; pp = pprint.PrettyPrinter(indent=4)  # NoQA
+import pprint
+
+pp = pprint.PrettyPrinter(indent=4)  # NoQA
 
 from .utils import load_datasets, Tokenizer
 import numpy as np
@@ -9,9 +11,9 @@ from .bleu import multi_bleu
 
 
 class SpeakerEvaluation(object):
-    ''' Results submission format:
+    """ Results submission format:
         [{'instr_id': string,
-          'trajectory':[(viewpoint_id, heading_rads, elevation_rads),]}] '''
+          'trajectory':[(viewpoint_id, heading_rads, elevation_rads),]}] """
 
     def __init__(self, splits, instructions_per_path=None):
         self.splits = splits
@@ -23,11 +25,12 @@ class SpeakerEvaluation(object):
         self.instructions_per_path = instructions_per_path
 
         for item in load_datasets(splits):
-            item['instructions'] = item['instructions'][:instructions_per_path]
-            self.gt[item['path_id']] = item
-            self.scans.append(item['scan'])
-            self.instr_ids += ['%d_%d' % (item['path_id'], i)
-                               for i in range(len(item['instructions']))]
+            item["instructions"] = item["instructions"][:instructions_per_path]
+            self.gt[item["path_id"]] = item
+            self.scans.append(item["scan"])
+            self.instr_ids += [
+                "%d_%d" % (item["path_id"], i) for i in range(len(item["instructions"]))
+            ]
 
         self.scans = set(self.scans)
         self.instr_ids = set(self.instr_ids)
@@ -43,11 +46,11 @@ class SpeakerEvaluation(object):
             if instr_id in instr_ids:
                 instr_ids.remove(instr_id)
 
-                base_id = int(instr_id.split('_')[0])
+                base_id = int(instr_id.split("_")[0])
 
                 if base_id in results_by_base_id:
-                    old_predicted = results_by_base_id[base_id]['words']
-                    new_predicted = result['words']
+                    old_predicted = results_by_base_id[base_id]["words"]
+                    new_predicted = result["words"]
                     if old_predicted != new_predicted:
                         mismatches.append((old_predicted, new_predicted))
                 else:
@@ -60,9 +63,11 @@ class SpeakerEvaluation(object):
                 print(new_pred)
                 print()
 
-        assert len(instr_ids) == 0, \
-            'Missing %d of %d instruction ids from %s' % (
-            len(instr_ids), len(self.instr_ids), ",".join(self.splits))
+        assert len(instr_ids) == 0, "Missing %d of %d instruction ids from %s" % (
+            len(instr_ids),
+            len(self.instr_ids),
+            ",".join(self.splits),
+        )
 
         all_refs = []
         all_hyps = []
@@ -77,15 +82,16 @@ class SpeakerEvaluation(object):
             instr_count += 1
             gt = self.gt[base_id]
             tokenized_refs = [
-                Tokenizer.split_sentence(ref) for ref in gt['instructions']]
-            tokenized_hyp = result['words']
+                Tokenizer.split_sentence(ref) for ref in gt["instructions"]
+            ]
+            tokenized_hyp = result["words"]
 
             replaced_gt = gt.copy()
-            replaced_gt['instructions'] = [' '.join(tokenized_hyp)]
+            replaced_gt["instructions"] = [" ".join(tokenized_hyp)]
             instruction_replaced_gt.append(replaced_gt)
 
-            if 'score' in result:
-                model_scores.append(result['score'])
+            if "score" in result:
+                model_scores.append(result["score"])
 
             if len(tokenized_refs) != self.instructions_per_path:
                 skip_count += 1
@@ -96,47 +102,52 @@ class SpeakerEvaluation(object):
 
             if verbose and instr_count % 100 == 0:
                 for i, ref in enumerate(tokenized_refs):
-                    print("ref {}:\t{}".format(i, ' '.join(ref)))
-                print("pred  :\t{}".format(' '.join(tokenized_hyp)))
+                    print("ref {}:\t{}".format(i, " ".join(ref)))
+                print("pred  :\t{}".format(" ".join(tokenized_hyp)))
                 print()
 
         if skip_count != 0:
-            print("skipped {} instructions without {} refs: {}".format(
-                skip_count, self.instructions_per_path, ' '.join(
-                    str(i) for i in skipped_refs)))
+            print(
+                "skipped {} instructions without {} refs: {}".format(
+                    skip_count,
+                    self.instructions_per_path,
+                    " ".join(str(i) for i in skipped_refs),
+                )
+            )
 
         model_score = np.mean(model_scores)
         bleu, unpenalized_bleu = multi_bleu(all_refs, all_hyps)
 
         score_summary = {
-            'model_score': model_score,
-            'bleu': bleu,
-            'unpenalized_bleu': unpenalized_bleu,
+            "model_score": model_score,
+            "bleu": bleu,
+            "unpenalized_bleu": unpenalized_bleu,
         }
         return score_summary, instruction_replaced_gt
 
     def score_file(self, output_file, verbose=False):
-        ''' Evaluate each agent trajectory based on how close it got to the
-        goal location '''
+        """ Evaluate each agent trajectory based on how close it got to the
+        goal location """
         with open(output_file) as f:
             return self.score_results(json.load(f), verbose=verbose)
 
 
 def eval_seq2seq():
     import train_speaker
+
     outfiles = [
-        train_speaker.RESULT_DIR + 'seq2seq_teacher_imagenet_%s_iter_5000.json',  # NoQA
-        train_speaker.RESULT_DIR + 'seq2seq_sample_imagenet_%s_iter_20000.json',  # NoQA
+        train_speaker.RESULT_DIR + "seq2seq_teacher_imagenet_%s_iter_5000.json",  # NoQA
+        train_speaker.RESULT_DIR + "seq2seq_sample_imagenet_%s_iter_20000.json",  # NoQA
     ]
     for outfile in outfiles:
-        for split in ['val_seen', 'val_unseen']:
+        for split in ["val_seen", "val_unseen"]:
             ev = SpeakerEvaluation([split])
             score_summary, _ = ev.score_file(outfile % split)
-            print('\n%s' % outfile)
+            print("\n%s" % outfile)
             pp.pprint(score_summary)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     # from train import make_arg_parser
     # utils.run(make_arg_parser(), eval_simple_agents)
     # eval_seq2seq()

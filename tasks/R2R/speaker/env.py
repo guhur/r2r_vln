@@ -1,7 +1,8 @@
-''' Batched Room-to-Room navigation environment '''
+""" Batched Room-to-Room navigation environment """
 
 import sys
-sys.path.append('build')
+
+sys.path.append("build")
 import MatterSim
 import csv
 import numpy as np
@@ -21,7 +22,16 @@ import itertools
 from . import paths
 from collections import namedtuple, defaultdict
 
-from .utils import load_datasets, load_nav_graphs, structured_map, vocab_pad_idx, decode_base64, k_best_indices, try_cuda, spatial_feature_from_bbox
+from .utils import (
+    load_datasets,
+    load_nav_graphs,
+    structured_map,
+    vocab_pad_idx,
+    decode_base64,
+    k_best_indices,
+    try_cuda,
+    spatial_feature_from_bbox,
+)
 
 import torch
 from torch.autograd import Variable
@@ -54,7 +64,7 @@ csv.field_size_limit(sys.maxsize)
 
 # assert len(FOLLOWER_MODEL_ACTIONS) == len(FOLLOWER_ENV_ACTIONS)
 
-angle_inc = np.pi / 6.
+angle_inc = np.pi / 6.0
 
 
 def _build_action_embedding(adj_loc_list, features):
@@ -64,10 +74,10 @@ def _build_action_embedding(adj_loc_list, features):
         if a == 0:
             # the embedding for the first action ('stop') is left as zero
             continue
-        embedding[a, :feature_dim] = features[adj_dict['absViewIndex']]
+        embedding[a, :feature_dim] = features[adj_dict["absViewIndex"]]
         loc_embedding = embedding[a, feature_dim:]
-        rel_heading = adj_dict['rel_heading']
-        rel_elevation = adj_dict['rel_elevation']
+        rel_heading = adj_dict["rel_heading"]
+        rel_elevation = adj_dict["rel_elevation"]
         loc_embedding[0:32] = np.sin(rel_heading)
         loc_embedding[32:64] = np.cos(rel_heading)
         loc_embedding[64:96] = np.sin(rel_elevation)
@@ -89,16 +99,17 @@ def build_viewpoint_loc_embedding(viewIndex):
         relViewIndex = (absViewIndex - viewIndex) % 12 + (absViewIndex // 12) * 12
         rel_heading = (relViewIndex % 12) * angle_inc
         rel_elevation = (relViewIndex // 12 - 1) * angle_inc
-        embedding[absViewIndex,  0:32] = np.sin(rel_heading)
+        embedding[absViewIndex, 0:32] = np.sin(rel_heading)
         embedding[absViewIndex, 32:64] = np.cos(rel_heading)
         embedding[absViewIndex, 64:96] = np.sin(rel_elevation)
-        embedding[absViewIndex,   96:] = np.cos(rel_elevation)
+        embedding[absViewIndex, 96:] = np.cos(rel_elevation)
     return embedding
 
 
 # pre-compute all the 36 possible paranoram location embeddings
 _static_loc_embeddings = [
-    build_viewpoint_loc_embedding(viewIndex) for viewIndex in range(36)]
+    build_viewpoint_loc_embedding(viewIndex) for viewIndex in range(36)
+]
 
 
 def _loc_distance(loc):
@@ -106,20 +117,20 @@ def _loc_distance(loc):
 
 
 def _canonical_angle(x):
-    ''' Make angle in (-pi, +pi) '''
+    """ Make angle in (-pi, +pi) """
     return x - 2 * np.pi * round(x / (2 * np.pi))
 
 
 def _adjust_heading(sim, heading):
     heading = (heading + 6) % 12 - 6  # minimum action to turn (e.g 11 -> -1)
-    ''' Make possibly more than one heading turns '''
+    """ Make possibly more than one heading turns """
     for _ in range(int(abs(heading))):
         sim.makeAction(0, np.sign(heading), 0)
 
 
 def _adjust_elevation(sim, elevation):
     for _ in range(int(abs(elevation))):
-        ''' Make possibly more than one elevation turns '''
+        """ Make possibly more than one elevation turns """
         sim.makeAction(0, 0, np.sign(elevation))
 
 
@@ -147,7 +158,7 @@ def _navigate_to_location(sim, nextViewpointId, absViewIndex):
 
 
 def _get_panorama_states(sim):
-    '''
+    """
     Look around and collect all the navigable locations
 
     Representation of all_adj_locs:
@@ -169,7 +180,7 @@ def _get_panorama_states(sim):
 
     Features are 36 x D_vis, ordered from relViewIndex 0 to 35 (i.e.
     feature[12] is always the feature of the patch forward horizontally)
-    '''
+    """
     state = sim.getState()
     initViewIndex = state.viewIndex
     # 1. first look down, turning to relViewIndex 0
@@ -194,49 +205,65 @@ def _get_panorama_states(sim):
             distance = _loc_distance(loc)
             # if a loc is visible from multiple view, use the closest
             # view (in angular distance) as its representation
-            if (loc.viewpointId not in adj_dict or
-                    distance < adj_dict[loc.viewpointId]['distance']):
-                rel_heading = _canonical_angle(
-                    base_rel_heading + loc.rel_heading)
+            if (
+                loc.viewpointId not in adj_dict
+                or distance < adj_dict[loc.viewpointId]["distance"]
+            ):
+                rel_heading = _canonical_angle(base_rel_heading + loc.rel_heading)
                 rel_elevation = base_rel_elevation + loc.rel_elevation
                 adj_dict[loc.viewpointId] = {
-                    'absViewIndex': absViewIndex,
-                    'nextViewpointId': loc.viewpointId,
-                    'rel_heading': rel_heading,
-                    'rel_elevation': rel_elevation,
-                    'distance': distance}
+                    "absViewIndex": absViewIndex,
+                    "nextViewpointId": loc.viewpointId,
+                    "rel_heading": rel_heading,
+                    "rel_elevation": rel_elevation,
+                    "distance": distance,
+                }
         # move to the next view
         if (relViewIndex + 1) % 12 == 0:
             sim.makeAction(0, 1, 1)  # Turn right and look up
         else:
             sim.makeAction(0, 1, 0)  # Turn right
     # 3. turn back to the original view
-    _adjust_elevation(sim, - 2 - elevation_delta)
+    _adjust_elevation(sim, -2 - elevation_delta)
     state = sim.getState()
     assert state.viewIndex == initViewIndex  # check the agent is back
     # collect navigable location list
-    stop = {
-        'absViewIndex': -1,
-        'nextViewpointId': state.location.viewpointId}
+    stop = {"absViewIndex": -1, "nextViewpointId": state.location.viewpointId}
     adj_loc_list = [stop] + sorted(
-            adj_dict.values(), key=lambda x: abs(x['rel_heading']))
+        adj_dict.values(), key=lambda x: abs(x["rel_heading"])
+    )
 
     return state, adj_loc_list
 
 
 WorldState = namedtuple("WorldState", ["scanId", "viewpointId", "heading", "elevation"])
 
-BottomUpViewpoint = namedtuple("BottomUpViewpoint", ["cls_prob", "image_features", "attribute_indices", "object_indices", "spatial_features", "no_object_mask"])
+BottomUpViewpoint = namedtuple(
+    "BottomUpViewpoint",
+    [
+        "cls_prob",
+        "image_features",
+        "attribute_indices",
+        "object_indices",
+        "spatial_features",
+        "no_object_mask",
+    ],
+)
+
 
 def load_world_state(sim, world_state):
     sim.newEpisode(*world_state)
 
+
 def get_world_state(sim):
     state = sim.getState()
-    return WorldState(scanId=state.scanId,
-                      viewpointId=state.location.viewpointId,
-                      heading=state.heading,
-                      elevation=state.elevation)
+    return WorldState(
+        scanId=state.scanId,
+        viewpointId=state.location.viewpointId,
+        heading=state.heading,
+        elevation=state.elevation,
+    )
+
 
 def make_sim(image_w, image_h, vfov):
     sim = MatterSim.Simulator()
@@ -246,6 +273,7 @@ def make_sim(image_w, image_h, vfov):
     sim.setCameraVFOV(math.radians(vfov))
     sim.init()
     return sim
+
 
 # def encode_action_sequence(action_tuples):
 #     encoded = []
@@ -281,6 +309,7 @@ def make_sim(image_w, image_h, vfov):
 #     else:
 #         return FOLLOWER_MODEL_ACTIONS.index('<end>')
 
+
 class ImageFeatures(object):
     NUM_VIEWS = 36
     MEAN_POOLED_DIM = 2048
@@ -302,14 +331,20 @@ class ImageFeatures(object):
                 #     #precomputed_cache_path=paths.bottom_up_feature_cache_path,
                 #     precomputed_cache_dir=paths.bottom_up_feature_cache_dir,
                 # ))
-                raise NotImplementedError('bottom_up_attention has not been implemented for panorama environment')
+                raise NotImplementedError(
+                    "bottom_up_attention has not been implemented for panorama environment"
+                )
             elif image_feature_type == "convolutional_attention":
-                feats.append(ConvolutionalImageFeatures(
-                    args.image_feature_datasets,
-                    split_convolutional_features=True,
-                    downscale_convolutional_features=args.downscale_convolutional_features
-                ))
-                raise NotImplementedError('convolutional_attention has not been implemented for panorama environment')
+                feats.append(
+                    ConvolutionalImageFeatures(
+                        args.image_feature_datasets,
+                        split_convolutional_features=True,
+                        downscale_convolutional_features=args.downscale_convolutional_features,
+                    )
+                )
+                raise NotImplementedError(
+                    "convolutional_attention has not been implemented for panorama environment"
+                )
             else:
                 assert image_feature_type == "mean_pooled"
                 feats.append(MeanPooledImageFeatures(args.image_feature_datasets))
@@ -317,12 +352,32 @@ class ImageFeatures(object):
 
     @staticmethod
     def add_args(argument_parser):
-        argument_parser.add_argument("--image_feature_type", nargs="+", choices=["none", "mean_pooled", "convolutional_attention", "bottom_up_attention"], default=["mean_pooled"])
+        argument_parser.add_argument(
+            "--image_feature_type",
+            nargs="+",
+            choices=[
+                "none",
+                "mean_pooled",
+                "convolutional_attention",
+                "bottom_up_attention",
+            ],
+            default=["mean_pooled"],
+        )
         argument_parser.add_argument("--image_attention_size", type=int)
-        argument_parser.add_argument("--image_feature_datasets", nargs="+", choices=["imagenet", "places365"], default=["imagenet"], help="only applicable to mean_pooled or convolutional_attention options for --image_feature_type")
+        argument_parser.add_argument(
+            "--image_feature_datasets",
+            nargs="+",
+            choices=["imagenet", "places365"],
+            default=["imagenet"],
+            help="only applicable to mean_pooled or convolutional_attention options for --image_feature_type",
+        )
         argument_parser.add_argument("--bottom_up_detections", type=int, default=20)
-        argument_parser.add_argument("--bottom_up_detection_embedding_size", type=int, default=20)
-        argument_parser.add_argument("--downscale_convolutional_features", action='store_true')
+        argument_parser.add_argument(
+            "--bottom_up_detection_embedding_size", type=int, default=20
+        )
+        argument_parser.add_argument(
+            "--downscale_convolutional_features", action="store_true"
+        )
 
     def get_name(self):
         raise NotImplementedError("get_name")
@@ -334,12 +389,15 @@ class ImageFeatures(object):
     def get_features(self, state):
         raise NotImplementedError("get_features")
 
+
 class NoImageFeatures(ImageFeatures):
     feature_dim = ImageFeatures.MEAN_POOLED_DIM
 
     def __init__(self):
-        print('Image features not provided')
-        self.features = np.zeros((ImageFeatures.NUM_VIEWS, self.feature_dim), dtype=np.float32)
+        print("Image features not provided")
+        self.features = np.zeros(
+            (ImageFeatures.NUM_VIEWS, self.feature_dim), dtype=np.float32
+        )
 
     def get_features(self, state):
         return self.features
@@ -347,35 +405,57 @@ class NoImageFeatures(ImageFeatures):
     def get_name(self):
         return "none"
 
+
 class MeanPooledImageFeatures(ImageFeatures):
     def __init__(self, image_feature_datasets):
         image_feature_datasets = sorted(image_feature_datasets)
         self.image_feature_datasets = image_feature_datasets
 
-        self.mean_pooled_feature_stores = [paths.mean_pooled_feature_store_paths[dataset]
-                                           for dataset in image_feature_datasets]
-        self.feature_dim = MeanPooledImageFeatures.MEAN_POOLED_DIM * len(image_feature_datasets)
-        print('Loading image features from %s' % ', '.join(self.mean_pooled_feature_stores))
-        tsv_fieldnames = ['scanId', 'viewpointId', 'image_w','image_h', 'vfov', 'features']
+        self.mean_pooled_feature_stores = [
+            paths.mean_pooled_feature_store_paths[dataset]
+            for dataset in image_feature_datasets
+        ]
+        self.feature_dim = MeanPooledImageFeatures.MEAN_POOLED_DIM * len(
+            image_feature_datasets
+        )
+        print(
+            "Loading image features from %s"
+            % ", ".join(self.mean_pooled_feature_stores)
+        )
+        tsv_fieldnames = [
+            "scanId",
+            "viewpointId",
+            "image_w",
+            "image_h",
+            "vfov",
+            "features",
+        ]
         self.features = defaultdict(list)
         for mpfs in self.mean_pooled_feature_stores:
             with open(mpfs, "rt") as tsv_in_file:
-                reader = csv.DictReader(tsv_in_file, delimiter='\t', fieldnames = tsv_fieldnames)
+                reader = csv.DictReader(
+                    tsv_in_file, delimiter="\t", fieldnames=tsv_fieldnames
+                )
                 for item in reader:
-                    assert int(item['image_h']) == ImageFeatures.IMAGE_H
-                    assert int(item['image_w']) == ImageFeatures.IMAGE_W
-                    assert int(item['vfov']) == ImageFeatures.VFOV
-                    long_id = self._make_id(item['scanId'], item['viewpointId'])
-                    features = np.frombuffer(decode_base64(item['features']), dtype=np.float32).reshape((ImageFeatures.NUM_VIEWS, ImageFeatures.MEAN_POOLED_DIM))
+                    assert int(item["image_h"]) == ImageFeatures.IMAGE_H
+                    assert int(item["image_w"]) == ImageFeatures.IMAGE_W
+                    assert int(item["vfov"]) == ImageFeatures.VFOV
+                    long_id = self._make_id(item["scanId"], item["viewpointId"])
+                    features = np.frombuffer(
+                        decode_base64(item["features"]), dtype=np.float32
+                    ).reshape((ImageFeatures.NUM_VIEWS, ImageFeatures.MEAN_POOLED_DIM))
                     self.features[long_id].append(features)
-        assert all(len(feats) == len(self.mean_pooled_feature_stores) for feats in self.features.values())
+        assert all(
+            len(feats) == len(self.mean_pooled_feature_stores)
+            for feats in self.features.values()
+        )
         self.features = {
             long_id: np.concatenate(feats, axis=1)
             for long_id, feats in self.features.items()
         }
 
     def _make_id(self, scanId, viewpointId):
-        return scanId + '_' + viewpointId
+        return scanId + "_" + viewpointId
 
     def get_features(self, state):
         long_id = self._make_id(state.scanId, state.location.viewpointId)
@@ -383,102 +463,148 @@ class MeanPooledImageFeatures(ImageFeatures):
         return self.features[long_id]
 
     def get_name(self):
-        name = '+'.join(sorted(self.image_feature_datasets))
+        name = "+".join(sorted(self.image_feature_datasets))
         name = "{}_mean_pooled".format(name)
         return name
+
 
 class ConvolutionalImageFeatures(ImageFeatures):
     feature_dim = ImageFeatures.MEAN_POOLED_DIM
 
-    def __init__(self, image_feature_datasets, split_convolutional_features=True, downscale_convolutional_features=True):
+    def __init__(
+        self,
+        image_feature_datasets,
+        split_convolutional_features=True,
+        downscale_convolutional_features=True,
+    ):
         self.image_feature_datasets = image_feature_datasets
         self.split_convolutional_features = split_convolutional_features
         self.downscale_convolutional_features = downscale_convolutional_features
 
-        self.convolutional_feature_stores = [paths.convolutional_feature_store_paths[dataset]
-                                             for dataset in image_feature_datasets]
+        self.convolutional_feature_stores = [
+            paths.convolutional_feature_store_paths[dataset]
+            for dataset in image_feature_datasets
+        ]
 
     def _make_id(self, scanId, viewpointId):
-        return scanId + '_' + viewpointId
+        return scanId + "_" + viewpointId
 
     @functools.lru_cache(maxsize=3000)
     def _get_convolutional_features(self, scanId, viewpointId, viewIndex):
         feats = []
         for cfs in self.convolutional_feature_stores:
             if self.split_convolutional_features:
-                path = os.path.join(cfs, scanId, "{}_{}{}.npy".format(viewpointId, viewIndex, "_downscaled" if self.downscale_convolutional_features else ""))
+                path = os.path.join(
+                    cfs,
+                    scanId,
+                    "{}_{}{}.npy".format(
+                        viewpointId,
+                        viewIndex,
+                        "_downscaled" if self.downscale_convolutional_features else "",
+                    ),
+                )
                 this_feats = np.load(path)
             else:
                 # memmap for loading subfeatures
                 path = os.path.join(cfs, scanId, "%s.npy" % viewpointId)
-                mmapped = np.load(path, mmap_mode='r')
-                this_feats = mmapped[viewIndex,:,:,:]
+                mmapped = np.load(path, mmap_mode="r")
+                this_feats = mmapped[viewIndex, :, :, :]
             feats.append(this_feats)
         if len(feats) > 1:
             return np.concatenate(feats, axis=1)
         return feats[0]
 
     def get_features(self, state):
-        return self._get_convolutional_features(state.scanId, state.location.viewpointId, state.viewIndex)
+        return self._get_convolutional_features(
+            state.scanId, state.location.viewpointId, state.viewIndex
+        )
 
     def get_name(self):
-        name = '+'.join(sorted(self.image_feature_datasets))
+        name = "+".join(sorted(self.image_feature_datasets))
         name = "{}_convolutional_attention".format(name)
         if self.downscale_convolutional_features:
             name = name + "_downscale"
         return name
 
+
 class BottomUpImageFeatures(ImageFeatures):
     PAD_ITEM = ("<pad>",)
     feature_dim = ImageFeatures.MEAN_POOLED_DIM
 
-    def __init__(self, number_of_detections, precomputed_cache_path=None, precomputed_cache_dir=None, image_width=640, image_height=480):
+    def __init__(
+        self,
+        number_of_detections,
+        precomputed_cache_path=None,
+        precomputed_cache_dir=None,
+        image_width=640,
+        image_height=480,
+    ):
         self.number_of_detections = number_of_detections
-        self.index_to_attributes, self.attribute_to_index = BottomUpImageFeatures.read_visual_genome_vocab(paths.bottom_up_attribute_path, BottomUpImageFeatures.PAD_ITEM, add_null=True)
-        self.index_to_objects, self.object_to_index = BottomUpImageFeatures.read_visual_genome_vocab(paths.bottom_up_object_path, BottomUpImageFeatures.PAD_ITEM, add_null=False)
+        (
+            self.index_to_attributes,
+            self.attribute_to_index,
+        ) = BottomUpImageFeatures.read_visual_genome_vocab(
+            paths.bottom_up_attribute_path,
+            BottomUpImageFeatures.PAD_ITEM,
+            add_null=True,
+        )
+        (
+            self.index_to_objects,
+            self.object_to_index,
+        ) = BottomUpImageFeatures.read_visual_genome_vocab(
+            paths.bottom_up_object_path, BottomUpImageFeatures.PAD_ITEM, add_null=False
+        )
 
         self.num_attributes = len(self.index_to_attributes)
         self.num_objects = len(self.index_to_objects)
 
-        self.attribute_pad_index = self.attribute_to_index[BottomUpImageFeatures.PAD_ITEM]
+        self.attribute_pad_index = self.attribute_to_index[
+            BottomUpImageFeatures.PAD_ITEM
+        ]
         self.object_pad_index = self.object_to_index[BottomUpImageFeatures.PAD_ITEM]
 
         self.image_width = image_width
         self.image_height = image_height
 
         self.precomputed_cache = {}
+
         def add_to_cache(key, viewpoints):
             assert len(viewpoints) == ImageFeatures.NUM_VIEWS
             viewpoint_feats = []
             for viewpoint in viewpoints:
                 params = {}
                 for param_key, param_value in viewpoint.items():
-                    if param_key == 'cls_prob':
+                    if param_key == "cls_prob":
                         # make sure it's in descending order
                         assert np.all(param_value[:-1] >= param_value[1:])
-                    if param_key == 'boxes':
+                    if param_key == "boxes":
                         # TODO: this is for backward compatibility, remove it
-                        param_key = 'spatial_features'
-                        param_value = spatial_feature_from_bbox(param_value, self.image_height, self.image_width)
+                        param_key = "spatial_features"
+                        param_value = spatial_feature_from_bbox(
+                            param_value, self.image_height, self.image_width
+                        )
                     assert len(param_value) >= self.number_of_detections
-                    params[param_key] = param_value[:self.number_of_detections]
+                    params[param_key] = param_value[: self.number_of_detections]
                 viewpoint_feats.append(BottomUpViewpoint(**params))
             self.precomputed_cache[key] = viewpoint_feats
 
         if precomputed_cache_dir:
             self.precomputed_cache = {}
             import glob
+
             for scene_dir in glob.glob(os.path.join(precomputed_cache_dir, "*")):
                 scene_id = os.path.basename(scene_dir)
-                pickle_file = os.path.join(scene_dir, "d={}.pkl".format(number_of_detections))
-                with open(pickle_file, 'rb') as f:
+                pickle_file = os.path.join(
+                    scene_dir, "d={}.pkl".format(number_of_detections)
+                )
+                with open(pickle_file, "rb") as f:
                     data = pickle.load(f)
                     for (viewpoint_id, viewpoints) in data.items():
                         key = (scene_id, viewpoint_id)
                         add_to_cache(key, viewpoints)
         elif precomputed_cache_path:
             self.precomputed_cache = {}
-            with open(precomputed_cache_path, 'rb') as f:
+            with open(precomputed_cache_path, "rb") as f:
                 data = pickle.load(f)
                 for (key, viewpoints) in data.items():
                     add_to_cache(key, viewpoints)
@@ -501,7 +627,7 @@ class BottomUpImageFeatures(ImageFeatures):
         with open(fname) as f:
             for index, line in enumerate(f):
                 this_items = []
-                for synonym in line.split(','):
+                for synonym in line.split(","):
                     item = tuple(synonym.split())
                     this_items.append(item)
                     item_to_index[item] = index + start_ix
@@ -523,7 +649,9 @@ class BottomUpImageFeatures(ImageFeatures):
             attribute_indices=transform([f.attribute_indices for f in feature_list]),
             object_indices=transform([f.object_indices for f in feature_list]),
             spatial_features=transform([f.spatial_features for f in feature_list]),
-            no_object_mask=transform([f.no_object_mask for f in feature_list], wrap_with_var=False),
+            no_object_mask=transform(
+                [f.no_object_mask for f in feature_list], wrap_with_var=False
+            ),
         )
 
     def parse_attribute_objects(self, tokens):
@@ -532,8 +660,16 @@ class BottomUpImageFeatures(ImageFeatures):
         for split_point in range(0, len(tokens)):
             attr_tokens = tuple(tokens[:split_point])
             obj_tokens = tuple(tokens[split_point:])
-            if attr_tokens in self.attribute_to_index and obj_tokens in self.object_to_index:
-                parse_options.append((self.attribute_to_index[attr_tokens], self.object_to_index[obj_tokens]))
+            if (
+                attr_tokens in self.attribute_to_index
+                and obj_tokens in self.object_to_index
+            ):
+                parse_options.append(
+                    (
+                        self.attribute_to_index[attr_tokens],
+                        self.object_to_index[obj_tokens],
+                    )
+                )
         assert parse_options, "didn't find any parses for {}".format(tokens)
         # prefer longer objects, e.g. "electrical outlet" over "electrical" "outlet"
         return parse_options[0]
@@ -543,48 +679,75 @@ class BottomUpImageFeatures(ImageFeatures):
         if self.precomputed_cache:
             return self.precomputed_cache[(scan_id, viewpoint_id)]
 
-        fname = os.path.join(paths.bottom_up_feature_store_path, scan_id, "{}.p".format(viewpoint_id))
-        with open(fname, 'rb') as f:
-            data = pickle.load(f, encoding='latin1')
+        fname = os.path.join(
+            paths.bottom_up_feature_store_path, scan_id, "{}.p".format(viewpoint_id)
+        )
+        with open(fname, "rb") as f:
+            data = pickle.load(f, encoding="latin1")
 
         viewpoint_features = []
         for viewpoint in data:
-            top_indices = k_best_indices(viewpoint['cls_prob'], self.number_of_detections, sorted=True)[::-1]
+            top_indices = k_best_indices(
+                viewpoint["cls_prob"], self.number_of_detections, sorted=True
+            )[::-1]
 
-            no_object = np.full(self.number_of_detections, True, dtype=np.uint8) # will become torch Byte tensor
-            no_object[0:len(top_indices)] = False
+            no_object = np.full(
+                self.number_of_detections, True, dtype=np.uint8
+            )  # will become torch Byte tensor
+            no_object[0 : len(top_indices)] = False
 
             cls_prob = np.zeros(self.number_of_detections, dtype=np.float32)
-            cls_prob[0:len(top_indices)] = viewpoint['cls_prob'][top_indices]
+            cls_prob[0 : len(top_indices)] = viewpoint["cls_prob"][top_indices]
             assert cls_prob[0] == np.max(cls_prob)
 
-            image_features = np.zeros((self.number_of_detections, ImageFeatures.MEAN_POOLED_DIM), dtype=np.float32)
-            image_features[0:len(top_indices)] = viewpoint['features'][top_indices]
+            image_features = np.zeros(
+                (self.number_of_detections, ImageFeatures.MEAN_POOLED_DIM),
+                dtype=np.float32,
+            )
+            image_features[0 : len(top_indices)] = viewpoint["features"][top_indices]
 
             spatial_feats = np.zeros((self.number_of_detections, 5), dtype=np.float32)
-            spatial_feats[0:len(top_indices)] = spatial_feature_from_bbox(viewpoint['boxes'][top_indices], self.image_height, self.image_width)
+            spatial_feats[0 : len(top_indices)] = spatial_feature_from_bbox(
+                viewpoint["boxes"][top_indices], self.image_height, self.image_width
+            )
 
             object_indices = np.full(self.number_of_detections, self.object_pad_index)
-            attribute_indices = np.full(self.number_of_detections, self.attribute_pad_index)
+            attribute_indices = np.full(
+                self.number_of_detections, self.attribute_pad_index
+            )
 
             for i, ix in enumerate(top_indices):
-                attribute_ix, object_ix = self.parse_attribute_objects(list(viewpoint['captions'][ix].split()))
+                attribute_ix, object_ix = self.parse_attribute_objects(
+                    list(viewpoint["captions"][ix].split())
+                )
                 object_indices[i] = object_ix
                 attribute_indices[i] = attribute_ix
 
-            viewpoint_features.append(BottomUpViewpoint(cls_prob, image_features, attribute_indices, object_indices, spatial_feats, no_object))
+            viewpoint_features.append(
+                BottomUpViewpoint(
+                    cls_prob,
+                    image_features,
+                    attribute_indices,
+                    object_indices,
+                    spatial_feats,
+                    no_object,
+                )
+            )
         return viewpoint_features
 
     def get_features(self, state):
-        viewpoint_features = self._get_viewpoint_features(state.scanId, state.location.viewpointId)
+        viewpoint_features = self._get_viewpoint_features(
+            state.scanId, state.location.viewpointId
+        )
         return viewpoint_features[state.viewIndex]
 
     def get_name(self):
         return "bottom_up_attention_d={}".format(self.number_of_detections)
 
-class EnvBatch():
-    ''' A simple wrapper for a batch of MatterSim environments,
-        using discretized viewpoints and pretrained features '''
+
+class EnvBatch:
+    """ A simple wrapper for a batch of MatterSim environments,
+        using discretized viewpoints and pretrained features """
 
     def __init__(self, batch_size, beam_size):
         self.sims = []
@@ -593,7 +756,9 @@ class EnvBatch():
         for i in range(batch_size):
             beam = []
             for j in range(beam_size):
-                sim = make_sim(ImageFeatures.IMAGE_W, ImageFeatures.IMAGE_H, ImageFeatures.VFOV)
+                sim = make_sim(
+                    ImageFeatures.IMAGE_W, ImageFeatures.IMAGE_H, ImageFeatures.VFOV
+                )
                 beam.append(sim)
             self.sims.append(beam)
 
@@ -608,7 +773,9 @@ class EnvBatch():
         assert len(headings) == len(viewpointIds)
         assert len(scanIds) == len(self.sims)
         world_states = []
-        for i, (scanId, viewpointId, heading) in enumerate(zip(scanIds, viewpointIds, headings)):
+        for i, (scanId, viewpointId, heading) in enumerate(
+            zip(scanIds, viewpointIds, headings)
+        ):
             world_state = WorldState(scanId, viewpointId, heading, 0)
             if beamed:
                 world_states.append([world_state])
@@ -619,26 +786,33 @@ class EnvBatch():
         return world_states
 
     def getStates(self, world_states, beamed=False):
-        ''' Get list of states. '''
+        """ Get list of states. """
+
         def f(sim, world_state):
             load_world_state(sim, world_state)
             return _get_panorama_states(sim)
+
         return structured_map(f, self.sims_view(beamed), world_states, nested=beamed)
 
     def makeActions(self, world_states, actions, last_obs, beamed=False):
-        ''' Take an action using the full state dependent action interface (with batched input).
+        """ Take an action using the full state dependent action interface (with batched input).
             Each action is an index in the adj_loc_list,
             0 means staying still (i.e. stop)
-        '''
+        """
+
         def f(sim, world_state, action, last_ob):
             load_world_state(sim, world_state)
             # load the location attribute corresponding to the action
-            loc_attr = last_ob['adj_loc_list'][action]
+            loc_attr = last_ob["adj_loc_list"][action]
             _navigate_to_location(
-                sim, loc_attr['nextViewpointId'], loc_attr['absViewIndex'])
+                sim, loc_attr["nextViewpointId"], loc_attr["absViewIndex"]
+            )
             # sim.makeAction(index, heading, elevation)
             return get_world_state(sim)
-        return structured_map(f, self.sims_view(beamed), world_states, actions, last_obs, nested=beamed)
+
+        return structured_map(
+            f, self.sims_view(beamed), world_states, actions, last_obs, nested=beamed
+        )
 
     # def makeSimpleActions(self, simple_indices, beamed=False):
     #     ''' Take an action using a simple interface: 0-forward, 1-turn left, 2-turn right, 3-look up, 4-look down.
@@ -661,29 +835,42 @@ class EnvBatch():
     #     structured_map(f, self.sims_view(beamed), simple_indices, nested=beamed)
     #     return None
 
-class R2RBatch():
-    ''' Implements the Room to Room navigation task, using discretized viewpoints and pretrained features '''
 
-    def __init__(self, image_features_list, batch_size=100, seed=10, splits=['train'], tokenizer=None, beam_size=1, instruction_limit=None):
+class R2RBatch:
+    """ Implements the Room to Room navigation task, using discretized viewpoints and pretrained features """
+
+    def __init__(
+        self,
+        image_features_list,
+        batch_size=100,
+        seed=10,
+        splits=["train"],
+        tokenizer=None,
+        beam_size=1,
+        instruction_limit=None,
+    ):
         self.image_features_list = image_features_list
         self.data = []
         self.scans = []
         self.gt = {}
         for item in load_datasets(splits):
             # Split multiple instructions into separate entries
-            assert item['path_id'] not in self.gt
-            self.gt[item['path_id']] = item
-            instructions = item['instructions']
+            assert item["path_id"] not in self.gt
+            self.gt[item["path_id"]] = item
+            instructions = item["instructions"]
             if instruction_limit:
                 instructions = instructions[:instruction_limit]
-            for j,instr in enumerate(instructions):
-                self.scans.append(item['scan'])
+            for j, instr in enumerate(instructions):
+                self.scans.append(item["scan"])
                 new_item = dict(item)
-                new_item['instr_id'] = '%s_%d' % (item['path_id'], j)
-                new_item['instructions'] = instr
+                new_item["instr_id"] = "%s_%d" % (item["path_id"], j)
+                new_item["instructions"] = instr
                 if tokenizer:
                     self.tokenizer = tokenizer
-                    new_item['instr_encoding'], new_item['instr_length'] = tokenizer.encode_sentence(instr)
+                    (
+                        new_item["instr_encoding"],
+                        new_item["instr_length"],
+                    ) = tokenizer.encode_sentence(instr)
                 else:
                     self.tokenizer = None
                 self.data.append(new_item)
@@ -697,12 +884,15 @@ class R2RBatch():
         self._load_nav_graphs()
         self.set_beam_size(beam_size)
         self.print_progress = False
-        print('R2RBatch loaded with %d instructions, using splits: %s' % (len(self.data), ",".join(splits)))
+        print(
+            "R2RBatch loaded with %d instructions, using splits: %s"
+            % (len(self.data), ",".join(splits))
+        )
 
     def set_beam_size(self, beam_size, force_reload=False):
         # warning: this will invalidate the environment, self.reset() should be called afterward!
         try:
-            invalid = (beam_size != self.beam_size)
+            invalid = beam_size != self.beam_size
         except:
             invalid = True
         if force_reload or invalid:
@@ -710,88 +900,96 @@ class R2RBatch():
             self.env = EnvBatch(self.batch_size, beam_size)
 
     def _load_nav_graphs(self):
-        ''' Load connectivity graph for each scan, useful for reasoning about shortest paths '''
-        print('Loading navigation graphs for %d scans' % len(self.scans))
+        """ Load connectivity graph for each scan, useful for reasoning about shortest paths """
+        print("Loading navigation graphs for %d scans" % len(self.scans))
         self.graphs = load_nav_graphs(self.scans)
         self.paths = {}
-        for scan,G in self.graphs.items(): # compute all shortest paths
+        for scan, G in self.graphs.items():  # compute all shortest paths
             self.paths[scan] = dict(nx.all_pairs_dijkstra_path(G))
         self.distances = {}
-        for scan,G in self.graphs.items(): # compute all shortest paths
+        for scan, G in self.graphs.items():  # compute all shortest paths
             self.distances[scan] = dict(nx.all_pairs_dijkstra_path_length(G))
 
     def _next_minibatch(self, sort_instr_length):
-        batch = self.data[self.ix:self.ix+self.batch_size]
+        batch = self.data[self.ix : self.ix + self.batch_size]
         if self.print_progress:
             sys.stderr.write("\rix {} / {}".format(self.ix, len(self.data)))
         if len(batch) < self.batch_size:
             random.shuffle(self.data)
             self.ix = self.batch_size - len(batch)
-            batch += self.data[:self.ix]
+            batch += self.data[: self.ix]
         else:
             self.ix += self.batch_size
         if sort_instr_length:
-            batch = sorted(batch, key=lambda item: item['instr_length'], reverse=True)
+            batch = sorted(batch, key=lambda item: item["instr_length"], reverse=True)
         self.batch = batch
 
     def reset_epoch(self):
-        ''' Reset the data index to beginning of epoch. Primarily for testing.
-            You must still call reset() for a new episode. '''
+        """ Reset the data index to beginning of epoch. Primarily for testing.
+            You must still call reset() for a new episode. """
         self.ix = 0
 
     def _shortest_path_action(self, state, adj_loc_list, goalViewpointId):
-        '''
+        """
         Determine next action on the shortest path to goal,
         for supervised training.
-        '''
+        """
         if state.location.viewpointId == goalViewpointId:
             return 0  # do nothing
-        path = self.paths[state.scanId][state.location.viewpointId][
-            goalViewpointId]
+        path = self.paths[state.scanId][state.location.viewpointId][goalViewpointId]
         nextViewpointId = path[1]
         for n_a, loc_attr in enumerate(adj_loc_list):
-            if loc_attr['nextViewpointId'] == nextViewpointId:
+            if loc_attr["nextViewpointId"] == nextViewpointId:
                 return n_a
 
         # Next nextViewpointId not found! This should not happen!
-        print('adj_loc_list:', adj_loc_list)
-        print('nextViewpointId:', nextViewpointId)
-        long_id = '{}_{}'.format(state.scanId, state.location.viewpointId)
-        print('longId:', long_id)
-        raise Exception('Bug: nextViewpointId not in adj_loc_list')
+        print("adj_loc_list:", adj_loc_list)
+        print("nextViewpointId:", nextViewpointId)
+        long_id = "{}_{}".format(state.scanId, state.location.viewpointId)
+        print("longId:", long_id)
+        raise Exception("Bug: nextViewpointId not in adj_loc_list")
 
     def observe(self, world_states, beamed=False, include_teacher=True):
-        #start_time = time.time()
+        # start_time = time.time()
         obs = []
-        for i,states_beam in enumerate(self.env.getStates(world_states, beamed=beamed)):
+        for i, states_beam in enumerate(
+            self.env.getStates(world_states, beamed=beamed)
+        ):
             item = self.batch[i]
             obs_batch = []
             for state, adj_loc_list in states_beam if beamed else [states_beam]:
-                assert item['scan'] == state.scanId
-                feature = [featurizer.get_features(state) for featurizer in self.image_features_list]
-                assert len(feature) == 1, 'for now, only work with MeanPooled feature'
-                feature_with_loc = np.concatenate((feature[0], _static_loc_embeddings[state.viewIndex]), axis=-1)
+                assert item["scan"] == state.scanId
+                feature = [
+                    featurizer.get_features(state)
+                    for featurizer in self.image_features_list
+                ]
+                assert len(feature) == 1, "for now, only work with MeanPooled feature"
+                feature_with_loc = np.concatenate(
+                    (feature[0], _static_loc_embeddings[state.viewIndex]), axis=-1
+                )
                 action_embedding = _build_action_embedding(adj_loc_list, feature[0])
                 ob = {
-                    'instr_id' : item['instr_id'],
-                    'scan' : state.scanId,
-                    'viewpoint' : state.location.viewpointId,
-                    'viewIndex' : state.viewIndex,
-                    'heading' : state.heading,
-                    'elevation' : state.elevation,
-                    'feature' : [feature_with_loc],
-                    'step' : state.step,
-                    'adj_loc_list' : adj_loc_list,
-                    'action_embedding': action_embedding,
-                    'navigableLocations' : state.navigableLocations,
-                    'instructions' : item['instructions'],
+                    "instr_id": item["instr_id"],
+                    "scan": state.scanId,
+                    "viewpoint": state.location.viewpointId,
+                    "viewIndex": state.viewIndex,
+                    "heading": state.heading,
+                    "elevation": state.elevation,
+                    "feature": [feature_with_loc],
+                    "step": state.step,
+                    "adj_loc_list": adj_loc_list,
+                    "action_embedding": action_embedding,
+                    "navigableLocations": state.navigableLocations,
+                    "instructions": item["instructions"],
                 }
                 if include_teacher:
-                    ob['teacher'] = self._shortest_path_action(state, adj_loc_list, item['path'][-1])
-                if 'instr_encoding' in item:
-                    ob['instr_encoding'] = item['instr_encoding']
-                if 'instr_length' in item:
-                    ob['instr_length'] = item['instr_length']
+                    ob["teacher"] = self._shortest_path_action(
+                        state, adj_loc_list, item["path"][-1]
+                    )
+                if "instr_encoding" in item:
+                    ob["instr_encoding"] = item["instr_encoding"]
+                if "instr_length" in item:
+                    ob["instr_length"] = item["instr_length"]
                 obs_batch.append(ob)
             if beamed:
                 obs.append(obs_batch)
@@ -799,25 +997,25 @@ class R2RBatch():
                 assert len(obs_batch) == 1
                 obs.append(obs_batch[0])
 
-        #end_time = time.time()
-        #print("get obs in {} seconds".format(end_time - start_time))
+        # end_time = time.time()
+        # print("get obs in {} seconds".format(end_time - start_time))
         return obs
 
     def get_starting_world_states(self, instance_list, beamed=False):
-        scanIds = [item['scan'] for item in instance_list]
-        viewpointIds = [item['path'][0] for item in instance_list]
-        headings = [item['heading'] for item in instance_list]
+        scanIds = [item["scan"] for item in instance_list]
+        viewpointIds = [item["path"][0] for item in instance_list]
+        headings = [item["heading"] for item in instance_list]
         return self.env.newEpisodes(scanIds, viewpointIds, headings, beamed=beamed)
 
     def reset(self, sort=False, beamed=False, load_next_minibatch=True):
-        ''' Load a new minibatch / episodes. '''
+        """ Load a new minibatch / episodes. """
         if load_next_minibatch:
             self._next_minibatch(sort)
         assert len(self.batch) == self.batch_size
         return self.get_starting_world_states(self.batch, beamed=beamed)
 
     def step(self, world_states, actions, last_obs, beamed=False):
-        ''' Take action (same interface as makeActions) '''
+        """ Take action (same interface as makeActions) """
         return self.env.makeActions(world_states, actions, last_obs, beamed=beamed)
 
     def shortest_paths_to_goals(self, starting_world_states, max_steps):
@@ -832,13 +1030,13 @@ class R2RBatch():
 
         ended = np.array([False] * len(obs))
         for t in range(max_steps):
-            actions = [ob['teacher'] for ob in obs]
+            actions = [ob["teacher"] for ob in obs]
             world_states = self.step(world_states, actions, obs)
             obs = self.observe(world_states)
-            for i,ob in enumerate(obs):
+            for i, ob in enumerate(obs):
                 if not ended[i]:
                     all_obs[i].append(ob)
-            for i,a in enumerate(actions):
+            for i, a in enumerate(actions):
                 if not ended[i]:
                     all_actions[i].append(a)
                     if a == 0:
@@ -849,6 +1047,8 @@ class R2RBatch():
 
     def gold_obs_actions_and_instructions(self, max_steps, load_next_minibatch=True):
         starting_world_states = self.reset(load_next_minibatch=load_next_minibatch)
-        path_obs, path_actions = self.shortest_paths_to_goals(starting_world_states, max_steps)
-        encoded_instructions = [obs[0]['instr_encoding'] for obs in path_obs]
+        path_obs, path_actions = self.shortest_paths_to_goals(
+            starting_world_states, max_steps
+        )
+        encoded_instructions = [obs[0]["instr_encoding"] for obs in path_obs]
         return path_obs, path_actions, encoded_instructions

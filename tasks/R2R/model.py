@@ -1,4 +1,3 @@
-
 import torch
 import torch.nn as nn
 from torch.autograd import Variable
@@ -8,12 +7,11 @@ from pytorch_pretrained_bert import BertModel, OpenAIGPTModel
 import math
 import random
 
-device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 
 # region Transformer
-def generate_relative_positions_matrix(length, max_relative_positions,
-                                       cache=False):
+def generate_relative_positions_matrix(length, max_relative_positions, cache=False):
     """Generate the clipped relative positions matrix
        for a given length and maximum relative positions
 
@@ -24,14 +22,14 @@ tensor([[4, 5, 6, 7],
         [1, 2, 3, 4]])
        """
     if cache:
-        distance_mat = torch.arange(-length+1, 1, 1).unsqueeze(0)
+        distance_mat = torch.arange(-length + 1, 1, 1).unsqueeze(0)
     else:
         range_vec = torch.arange(length)
         range_mat = range_vec.unsqueeze(-1).expand(-1, length).transpose(0, 1)
         distance_mat = range_mat - range_mat.transpose(0, 1)
-    distance_mat_clipped = torch.clamp(distance_mat,
-                                       min=-max_relative_positions,
-                                       max=max_relative_positions)
+    distance_mat_clipped = torch.clamp(
+        distance_mat, min=-max_relative_positions, max=max_relative_positions
+    )
     # Shift values to be >= 0
     final_mat = distance_mat_clipped + max_relative_positions
     return final_mat
@@ -109,8 +107,7 @@ class MultiHeadedAttention(nn.Module):
            dropout (float): dropout parameter
         """
 
-    def __init__(self, head_count, model_dim, dropout=0.1,
-                 max_relative_positions=0):
+    def __init__(self, head_count, model_dim, dropout=0.1, max_relative_positions=0):
         assert model_dim % head_count == 0
         self.dim_per_head = model_dim // head_count
         self.model_dim = model_dim
@@ -118,12 +115,9 @@ class MultiHeadedAttention(nn.Module):
         super(MultiHeadedAttention, self).__init__()
         self.head_count = head_count
 
-        self.linear_keys = nn.Linear(model_dim,
-                                     head_count * self.dim_per_head)
-        self.linear_values = nn.Linear(model_dim,
-                                       head_count * self.dim_per_head)
-        self.linear_query = nn.Linear(model_dim,
-                                      head_count * self.dim_per_head)
+        self.linear_keys = nn.Linear(model_dim, head_count * self.dim_per_head)
+        self.linear_values = nn.Linear(model_dim, head_count * self.dim_per_head)
+        self.linear_query = nn.Linear(model_dim, head_count * self.dim_per_head)
         self.softmax = nn.Softmax(dim=-1)
         self.dropout = nn.Dropout(dropout)
         self.final_linear = nn.Linear(model_dim, model_dim)
@@ -133,10 +127,10 @@ class MultiHeadedAttention(nn.Module):
         if max_relative_positions > 0:
             vocab_size = max_relative_positions * 2 + 1
             self.relative_positions_embeddings = nn.Embedding(
-                vocab_size, self.dim_per_head)
+                vocab_size, self.dim_per_head
+            )
 
-    def forward(self, key, value, query, mask= None,
-            layer_cache=None, type=None):
+    def forward(self, key, value, query, mask=None, layer_cache=None, type=None):
         """
         Compute the context vector and the attention vectors.
         Args:
@@ -165,42 +159,47 @@ class MultiHeadedAttention(nn.Module):
             """Projection.
             batch_size, length, head_count * dim_per_head
             -->batch_size, heads, length, dim_per_head"""
-            return x.view(batch_size, -1, head_count, dim_per_head) \
-                .transpose(1, 2)
+            return x.view(batch_size, -1, head_count, dim_per_head).transpose(1, 2)
 
         def unshape(x):
             """Compute context."""
-            return x.transpose(1, 2).contiguous() \
-                    .view(batch_size, -1, head_count * dim_per_head)
+            return (
+                x.transpose(1, 2)
+                .contiguous()
+                .view(batch_size, -1, head_count * dim_per_head)
+            )
 
         # 1) Project key, value, and query.
         if layer_cache is not None:
             if type == "self":
-                query, key, value = self.linear_query(query), \
-                                    self.linear_keys(query), \
-                                    self.linear_values(query)
+                query, key, value = (
+                    self.linear_query(query),
+                    self.linear_keys(query),
+                    self.linear_values(query),
+                )
                 key = shape(key)
                 value = shape(value)
                 if layer_cache["self_keys"] is not None:
                     key = torch.cat(
-                        (layer_cache["self_keys"].to(device), key),
-                        dim=2)  # length +1? x2?
+                        (layer_cache["self_keys"].to(device), key), dim=2
+                    )  # length +1? x2?
                 if layer_cache["self_values"] is not None:
                     value = torch.cat(
-                        (layer_cache["self_values"].to(device), value),
-                        dim=2)
+                        (layer_cache["self_values"].to(device), value), dim=2
+                    )
                 layer_cache["self_keys"] = key
                 layer_cache["self_values"] = value
             elif type == "context":
                 query = self.linear_query(query)
                 if layer_cache["memory_keys"] is None:
-                    key, value = self.linear_keys(key), \
-                                 self.linear_values(value)
+                    key, value = self.linear_keys(key), self.linear_values(value)
                     key = shape(key)
                     value = shape(value)
                 else:
-                    key, value = layer_cache["memory_keys"], \
-                                 layer_cache["memory_values"]
+                    key, value = (
+                        layer_cache["memory_keys"],
+                        layer_cache["memory_values"],
+                    )
                 layer_cache["memory_keys"] = key
                 layer_cache["memory_values"] = value
         else:
@@ -214,13 +213,18 @@ class MultiHeadedAttention(nn.Module):
             key_len = key.size(2)  # length
             # 1 or key_len x key_len
             relative_positions_matrix = generate_relative_positions_matrix(
-                key_len, self.max_relative_positions, cache=True if layer_cache is not None else False)
+                key_len,
+                self.max_relative_positions,
+                cache=True if layer_cache is not None else False,
+            )
             #  1 or key_len x key_len x dim_per_head
             relations_keys = self.relative_positions_embeddings(
-                relative_positions_matrix.to(device))
+                relative_positions_matrix.to(device)
+            )
             #  1 or key_len x key_len x dim_per_head
             relations_values = self.relative_positions_embeddings(
-                relative_positions_matrix.to(device))
+                relative_positions_matrix.to(device)
+            )
 
         query = shape(query)  # batch_size, heads, length, dim_per_head
 
@@ -251,10 +255,9 @@ class MultiHeadedAttention(nn.Module):
         context_original = torch.matmul(drop_attn, value)
 
         if self.max_relative_positions > 0 and type == "self":
-            context = unshape(context_original
-                              + relative_matmul(drop_attn,
-                                                relations_values,
-                                                False))
+            context = unshape(
+                context_original + relative_matmul(drop_attn, relations_values, False)
+            )
         else:
             context = unshape(context_original)
 
@@ -266,10 +269,9 @@ class MultiHeadedAttention(nn.Module):
         # aeq(d, d_)
 
         # Return one attn
-        top_attn = attn \
-            .view(batch_size, head_count,
-                  query_len, key_len)[:, 0, :, :] \
-            .contiguous()
+        top_attn = attn.view(batch_size, head_count, query_len, key_len)[
+            :, 0, :, :
+        ].contiguous()
 
         return output, top_attn
 
@@ -317,13 +319,15 @@ class TransformerEncoderLayer(nn.Module):
         dropout (float): dropout probability(0-1.0).
     """
 
-    def __init__(self, d_model, heads, d_ff, dropout,
-                 max_relative_positions=0):
+    def __init__(self, d_model, heads, d_ff, dropout, max_relative_positions=0):
         super(TransformerEncoderLayer, self).__init__()
 
         self.self_attn = MultiHeadedAttention(
-            heads, d_model, dropout=dropout,
-            max_relative_positions=max_relative_positions)
+            heads,
+            d_model,
+            dropout=dropout,
+            max_relative_positions=max_relative_positions,
+        )
         self.feed_forward = PositionwiseFeedForward(d_model, d_ff, dropout)
         self.layer_norm = nn.LayerNorm(d_model, eps=1e-6)
         self.dropout = nn.Dropout(dropout)
@@ -338,8 +342,9 @@ class TransformerEncoderLayer(nn.Module):
             * outputs ``(batch_size, src_len, model_dim)``
         """
         input_norm = self.layer_norm(inputs)
-        context, _ = self.self_attn(input_norm, input_norm, input_norm,
-                                    mask=mask, type="self")
+        context, _ = self.self_attn(
+            input_norm, input_norm, input_norm, mask=mask, type="self"
+        )
         out = self.dropout(context) + inputs
         return self.feed_forward(out)
 
@@ -369,10 +374,25 @@ class TransformerEncoder(nn.Module):
         * embeddings ``(src_len, batch_size, model_dim)``
         * memory_bank ``(src_len, batch_size, model_dim)``
     """
+
     lstm_num_layers = 1
 
-    def __init__(self, vocab_size, emb_hidden_size, padding_idx,
-                 dropout_ratio, glove, heads, d_ff, hidden_size, dec_hidden_size, top_lstm, bidirectional, max_relative_positions=0, num_layers = 1):
+    def __init__(
+        self,
+        vocab_size,
+        emb_hidden_size,
+        padding_idx,
+        dropout_ratio,
+        glove,
+        heads,
+        d_ff,
+        hidden_size,
+        dec_hidden_size,
+        top_lstm,
+        bidirectional,
+        max_relative_positions=0,
+        num_layers=1,
+    ):
         super(TransformerEncoder, self).__init__()
 
         self.embedding_size = emb_hidden_size
@@ -390,36 +410,62 @@ class TransformerEncoder(nn.Module):
         #
         self.top_lstm = top_lstm
         self.transformer = nn.ModuleList(
-            [TransformerEncoderLayer(
-                emb_hidden_size, heads, d_ff, dropout_ratio,
-                max_relative_positions=max_relative_positions)
-             for i in range(num_layers)])
+            [
+                TransformerEncoderLayer(
+                    emb_hidden_size,
+                    heads,
+                    d_ff,
+                    dropout_ratio,
+                    max_relative_positions=max_relative_positions,
+                )
+                for i in range(num_layers)
+            ]
+        )
         self.layer_norm = nn.LayerNorm(emb_hidden_size, eps=1e-6)
 
         self.num_directions = 2 if bidirectional else 1
-        self.lstm = nn.LSTM(self.embedding_size, self.hidden_size, self.lstm_num_layers,
-                            batch_first=True,
-                            dropout=dropout_ratio if self.lstm_num_layers > 1 else 0, bidirectional=bidirectional)
+        self.lstm = nn.LSTM(
+            self.embedding_size,
+            self.hidden_size,
+            self.lstm_num_layers,
+            batch_first=True,
+            dropout=dropout_ratio if self.lstm_num_layers > 1 else 0,
+            bidirectional=bidirectional,
+        )
 
-        self.linear_n_in = self.embedding_size if not self.top_lstm else hidden_size * self.num_directions
+        self.linear_n_in = (
+            self.embedding_size
+            if not self.top_lstm
+            else hidden_size * self.num_directions
+        )
         self.encoder2decoder_ht = nn.Linear(self.linear_n_in, dec_hidden_size)
         self.encoder2decoder_ct = nn.Linear(self.linear_n_in, dec_hidden_size)
 
     def init_state(self, batch_size):
-        ''' Initialize to zero cell states and hidden states.'''
-        h0 = Variable(torch.zeros(batch_size, self.dec_hidden_size), requires_grad=False)
-        c0 = Variable(torch.zeros(batch_size, self.dec_hidden_size), requires_grad=False)
+        """ Initialize to zero cell states and hidden states."""
+        h0 = Variable(
+            torch.zeros(batch_size, self.dec_hidden_size), requires_grad=False
+        )
+        c0 = Variable(
+            torch.zeros(batch_size, self.dec_hidden_size), requires_grad=False
+        )
         return h0.to(device), c0.to(device)
 
     def init_state_lstm(self, batch_size):
-        ''' Initialize to zero cell states and hidden states.'''
-        h0 = Variable(torch.zeros(self.num_directions, batch_size, self.hidden_size), requires_grad=False)
-        c0 = Variable(torch.zeros(self.num_directions, batch_size, self.hidden_size), requires_grad=False)
+        """ Initialize to zero cell states and hidden states."""
+        h0 = Variable(
+            torch.zeros(self.num_directions, batch_size, self.hidden_size),
+            requires_grad=False,
+        )
+        c0 = Variable(
+            torch.zeros(self.num_directions, batch_size, self.hidden_size),
+            requires_grad=False,
+        )
         return h0.to(device), c0.to(device)
 
     def forward(self, inputs, mask, lengths):
 
-        emb = self.embedding(inputs[:,:mask.shape[1]])
+        emb = self.embedding(inputs[:, : mask.shape[1]])
         # Run the forward pass of every layer of the tranformer.
         for layer in self.transformer:
             out = layer(emb, mask.unsqueeze(1))
@@ -439,7 +485,7 @@ class TransformerEncoder(nn.Module):
             c_t = torch.cat((enc_c_t[-1], enc_c_t[-2]), 1)
         else:
             h_t = enc_h_t[-1]
-            c_t = enc_c_t[-1] # (batch, hidden_size)
+            c_t = enc_c_t[-1]  # (batch, hidden_size)
 
         decoder_init = nn.Tanh()(self.encoder2decoder_ht(h_t))
         if self.hidden_size * self.num_directions != self.dec_hidden_size:
@@ -451,52 +497,116 @@ class TransformerEncoder(nn.Module):
 
 
 class MultiTransformerEncoder(TransformerEncoder):
-    def __init__(self, vocab_size, emb_hidden_size, padding_idx,
-                 dropout_ratio, multi_share, n_sentences, glove, heads, d_ff, hidden_size, dec_hidden_size, top_lstm, bidirectional, max_relative_positions=0, num_layers = 1):
-        super(MultiTransformerEncoder, self).__init__(vocab_size, emb_hidden_size, padding_idx,
-                                                      dropout_ratio, glove, heads, d_ff, hidden_size, dec_hidden_size, top_lstm, bidirectional, max_relative_positions, num_layers)
+    def __init__(
+        self,
+        vocab_size,
+        emb_hidden_size,
+        padding_idx,
+        dropout_ratio,
+        multi_share,
+        n_sentences,
+        glove,
+        heads,
+        d_ff,
+        hidden_size,
+        dec_hidden_size,
+        top_lstm,
+        bidirectional,
+        max_relative_positions=0,
+        num_layers=1,
+    ):
+        super(MultiTransformerEncoder, self).__init__(
+            vocab_size,
+            emb_hidden_size,
+            padding_idx,
+            dropout_ratio,
+            glove,
+            heads,
+            d_ff,
+            hidden_size,
+            dec_hidden_size,
+            top_lstm,
+            bidirectional,
+            max_relative_positions,
+            num_layers,
+        )
         self.n_sentences = n_sentences
         self.multi_share = multi_share
 
-        for i in range(max(self.n_sentences-1, 2)):
-            setattr(self, 'transformer'+str(i+1), None)
-            setattr(self, 'layer_norm'+str(i+1), None)
-            setattr(self, 'lstm'+str(i+1), None)
+        for i in range(max(self.n_sentences - 1, 2)):
+            setattr(self, "transformer" + str(i + 1), None)
+            setattr(self, "layer_norm" + str(i + 1), None)
+            setattr(self, "lstm" + str(i + 1), None)
         if not multi_share:
             for i in range(self.n_sentences - 1):
-                setattr(self, 'transformer' + str(i + 1),nn.ModuleList( [TransformerEncoderLayer(
-                    emb_hidden_size, heads, d_ff, dropout_ratio,
-                    max_relative_positions=max_relative_positions)
-                    for l in range(num_layers)]))
-                setattr(self, 'layer_norm' + str(i + 1),nn.LayerNorm(emb_hidden_size, eps=1e-6))
-                setattr(self, 'lstm' + str(i + 1),nn.LSTM(self.embedding_size, self.hidden_size, self.lstm_num_layers,
-                            batch_first=True,
-                            dropout=dropout_ratio if self.lstm_num_layers > 1 else 0,
-                                                          bidirectional=bidirectional))
+                setattr(
+                    self,
+                    "transformer" + str(i + 1),
+                    nn.ModuleList(
+                        [
+                            TransformerEncoderLayer(
+                                emb_hidden_size,
+                                heads,
+                                d_ff,
+                                dropout_ratio,
+                                max_relative_positions=max_relative_positions,
+                            )
+                            for l in range(num_layers)
+                        ]
+                    ),
+                )
+                setattr(
+                    self,
+                    "layer_norm" + str(i + 1),
+                    nn.LayerNorm(emb_hidden_size, eps=1e-6),
+                )
+                setattr(
+                    self,
+                    "lstm" + str(i + 1),
+                    nn.LSTM(
+                        self.embedding_size,
+                        self.hidden_size,
+                        self.lstm_num_layers,
+                        batch_first=True,
+                        dropout=dropout_ratio if self.lstm_num_layers > 1 else 0,
+                        bidirectional=bidirectional,
+                    ),
+                )
 
     def set_n_sentences(self, n_sentences):
         self.n_sentences = n_sentences
 
     def forward(self, inputs, masks, lengths):
-        ''' Expects input vocab indices as (batch, seq_len). Also requires a
-            list of lengths for dynamic batching. '''
-        ctxs, decoder_inits, c_ts, maskss = [], None, None ,[]
+        """ Expects input vocab indices as (batch, seq_len). Also requires a
+            list of lengths for dynamic batching. """
+        ctxs, decoder_inits, c_ts, maskss = [], None, None, []
 
-        transformers = [getattr(self, 'transformer'+(str(i) if i!=0 else '')) for i in range(self.n_sentences)]
-        layer_norms = [getattr(self, 'layer_norm'+(str(i) if i!=0 else '')) for i in range(self.n_sentences)]  #  lstms = [self.lstm, self.lstm2, self.lstm3]
-        lstms = [getattr(self, 'lstm' + (str(i) if i != 0 else '')) for i in
-                 range(self.n_sentences)]  # lstms = [self.lstm, self.lstm2, self.lstm3]
+        transformers = [
+            getattr(self, "transformer" + (str(i) if i != 0 else ""))
+            for i in range(self.n_sentences)
+        ]
+        layer_norms = [
+            getattr(self, "layer_norm" + (str(i) if i != 0 else ""))
+            for i in range(self.n_sentences)
+        ]  #  lstms = [self.lstm, self.lstm2, self.lstm3]
+        lstms = [
+            getattr(self, "lstm" + (str(i) if i != 0 else ""))
+            for i in range(self.n_sentences)
+        ]  # lstms = [self.lstm, self.lstm2, self.lstm3]
 
         if not self.multi_share:
-            temp=[i for i in range(self.n_sentences)]
+            temp = [i for i in range(self.n_sentences)]
             random.shuffle(temp)
             transformers = [transformers[i] for i in temp]
             layer_norms = [layer_norms[i] for i in temp]
 
-        for si,(input, mask, (length, perm_idx), transformerN, layer_normN, lstmN) in enumerate(zip(inputs, masks, lengths, transformers, layer_norms, lstms)):
-            emb = self.embedding(input[:, :mask.shape[1]])
+        for (
+            si,
+            (input, mask, (length, perm_idx), transformerN, layer_normN, lstmN),
+        ) in enumerate(zip(inputs, masks, lengths, transformers, layer_norms, lstms)):
+            emb = self.embedding(input[:, : mask.shape[1]])
             # Run the forward pass of every layer of the tranformer.
-            for layer in (self.transformer if self.multi_share else transformerN):
+            for layer in self.transformer if self.multi_share else transformerN:
                 out = layer(emb, mask.unsqueeze(1))
             out = self.layer_norm(out) if self.multi_share else layer_normN(out)
 
@@ -508,8 +618,11 @@ class MultiTransformerEncoder(TransformerEncoder):
                 embeds = out
                 h0, c0 = self.init_state_lstm(batch_size)
                 packed_embeds = pack_padded_sequence(embeds, length, batch_first=True)
-                enc_h, (enc_h_t, enc_c_t) = self.lstm(packed_embeds, (h0, c0)) if self.multi_share \
+                enc_h, (enc_h_t, enc_c_t) = (
+                    self.lstm(packed_embeds, (h0, c0))
+                    if self.multi_share
                     else lstmN(packed_embeds, (h0, c0))
+                )
                 if self.num_directions == 2:
                     h_t = torch.cat((enc_h_t[-1], enc_h_t[-2]), 1)
                     c_t = torch.cat((enc_c_t[-1], enc_c_t[-2]), 1)
@@ -523,7 +636,7 @@ class MultiTransformerEncoder(TransformerEncoder):
 
                 ctx, length = pad_packed_sequence(enc_h, batch_first=True)
                 ctx = self.drop(ctx)
-                #return ctx, decoder_init, c_t, mask
+                # return ctx, decoder_init, c_t, mask
 
             perm_idx = list(perm_idx.numpy())
             unperm_idx = [perm_idx.index(i) for i, _ in enumerate(perm_idx)]
@@ -544,8 +657,13 @@ class MultiTransformerEncoder(TransformerEncoder):
 
         decoder_inits = decoder_inits / self.n_sentences
         c_ts = c_ts / self.n_sentences
-        return ctxs, decoder_inits, c_ts, maskss  # (batch, seq_len, hidden_size*num_directions)
-                                 # (batch, hidden_size)
+        return (
+            ctxs,
+            decoder_inits,
+            c_ts,
+            maskss,
+        )  # (batch, seq_len, hidden_size*num_directions)
+        # (batch, hidden_size)
 
 
 # endregion
@@ -556,48 +674,74 @@ class GptEncoder(nn.Module):
     transformer_hidden_size = 768
     lstm_num_layers = 1
 
-    def __init__(self, hidden_size, dec_hidden_size, dropout_ratio, bidirectional, update, bert_n_layers, reverse_input, top_lstm):
+    def __init__(
+        self,
+        hidden_size,
+        dec_hidden_size,
+        dropout_ratio,
+        bidirectional,
+        update,
+        bert_n_layers,
+        reverse_input,
+        top_lstm,
+    ):
         super(GptEncoder, self).__init__()
         self.hidden_size = hidden_size
         self.dec_hidden_size = dec_hidden_size
         self.dropout_ratio = dropout_ratio
-        self.drop = nn. Dropout(p=dropout_ratio)
+        self.drop = nn.Dropout(p=dropout_ratio)
         self.update = update
         self.bert_n_layers = bert_n_layers
         self.reverse_input = reverse_input
         self.top_lstm = top_lstm
-        self.gpt = OpenAIGPTModel.from_pretrained('openai-gpt').to(device)
+        self.gpt = OpenAIGPTModel.from_pretrained("openai-gpt").to(device)
 
-        self.lstm = nn.LSTM(self.transformer_hidden_size*self.bert_n_layers, self.hidden_size, self.lstm_num_layers, batch_first=True,
-                             dropout=dropout_ratio if self.lstm_num_layers>1 else 0, bidirectional=bidirectional)
+        self.lstm = nn.LSTM(
+            self.transformer_hidden_size * self.bert_n_layers,
+            self.hidden_size,
+            self.lstm_num_layers,
+            batch_first=True,
+            dropout=dropout_ratio if self.lstm_num_layers > 1 else 0,
+            bidirectional=bidirectional,
+        )
         #
         self.num_directions = 2 if bidirectional else 1
 
-        self.linear_n_in = self.transformer_hidden_size * self.bert_n_layers if not self.top_lstm else hidden_size * self.num_directions
+        self.linear_n_in = (
+            self.transformer_hidden_size * self.bert_n_layers
+            if not self.top_lstm
+            else hidden_size * self.num_directions
+        )
         self.encoder2decoder_ht = nn.Linear(self.linear_n_in, dec_hidden_size)
         self.encoder2decoder_ct = nn.Linear(self.linear_n_in, dec_hidden_size)
 
-
     def init_state(self, batch_size):
-        ''' Initialize to zero cell states and hidden states.'''
-        h0 = Variable(torch.zeros(self.num_directions, batch_size, self.hidden_size), requires_grad=False)
-        c0 = Variable(torch.zeros(self.num_directions, batch_size, self.hidden_size), requires_grad=False)
+        """ Initialize to zero cell states and hidden states."""
+        h0 = Variable(
+            torch.zeros(self.num_directions, batch_size, self.hidden_size),
+            requires_grad=False,
+        )
+        c0 = Variable(
+            torch.zeros(self.num_directions, batch_size, self.hidden_size),
+            requires_grad=False,
+        )
         return h0.to(device), c0.to(device)
 
-
     def forward(self, inputs, mask, lengths):
-        ''' Expects input vocab indices as (batch, seq_len). Also requires a
-            list of lengths for dynamic batching. '''
+        """ Expects input vocab indices as (batch, seq_len). Also requires a
+            list of lengths for dynamic batching. """
         batch_size = inputs.size(0)
         seq_max_len = mask.size(1)
         att_mask = ~mask
-        encoder_layer = self.gpt(inputs[:, :seq_max_len])# token_type_ids=None, attention_mask=att_mask.to(device))
+        encoder_layer = self.gpt(
+            inputs[:, :seq_max_len]
+        )  # token_type_ids=None, attention_mask=att_mask.to(device))
         embeds = encoder_layer
 
         if self.reverse_input:
             reversed_embeds = torch.zeros(embeds.size()).to(device)
-            reverse_idx = torch.arange(seq_max_len-1,-1,-1)
-            reversed_embeds[att_mask] = embeds[:, reverse_idx][att_mask[:,reverse_idx]]
+            reverse_idx = torch.arange(seq_max_len - 1, -1, -1)
+            reversed_embeds[att_mask] = embeds[:, reverse_idx][att_mask[:, reverse_idx]]
             embeds = reversed_embeds
 
         if not self.update:
@@ -616,7 +760,7 @@ class GptEncoder(nn.Module):
                 c_t = torch.cat((enc_c_t[-1], enc_c_t[-2]), 1)
             else:
                 h_t = enc_h_t[-1]
-                c_t = enc_c_t[-1] # (batch, hidden_size)
+                c_t = enc_c_t[-1]  # (batch, hidden_size)
 
             decoder_init = nn.Tanh()(self.encoder2decoder_ht(h_t))
             if self.hidden_size * self.num_directions != self.dec_hidden_size:
@@ -624,21 +768,46 @@ class GptEncoder(nn.Module):
 
             ctx, lengths = pad_packed_sequence(enc_h, batch_first=True)
         ctx = self.drop(ctx)
-        return ctx,decoder_init,c_t, mask  # (batch, seq_len, hidden_size*num_directions)
-                                 # (batch, hidden_size)
+        return (
+            ctx,
+            decoder_init,
+            c_t,
+            mask,
+        )  # (batch, seq_len, hidden_size*num_directions)
+        # (batch, hidden_size)
 
 
 class MultiGptEncoder(GptEncoder):
-
-    def __init__(self, hidden_size, dec_hidden_size, dropout_ratio, bidirectional, update, bert_n_layers, reverse_input, top_lstm, multi_share, n_sentences):
-        super(MultiGptEncoder, self).__init__(hidden_size, dec_hidden_size, dropout_ratio, bidirectional, update, bert_n_layers, reverse_input, top_lstm)
+    def __init__(
+        self,
+        hidden_size,
+        dec_hidden_size,
+        dropout_ratio,
+        bidirectional,
+        update,
+        bert_n_layers,
+        reverse_input,
+        top_lstm,
+        multi_share,
+        n_sentences,
+    ):
+        super(MultiGptEncoder, self).__init__(
+            hidden_size,
+            dec_hidden_size,
+            dropout_ratio,
+            bidirectional,
+            update,
+            bert_n_layers,
+            reverse_input,
+            top_lstm,
+        )
 
         self.n_sentences = n_sentences
         self.multi_share = multi_share
 
         for i in range(max(self.n_sentences - 1, 2)):
-            setattr(self, 'gpt' + str(i + 1), None)
-            setattr(self, 'lstm' + str(i + 1), None)
+            setattr(self, "gpt" + str(i + 1), None)
+            setattr(self, "lstm" + str(i + 1), None)
         if not multi_share:
             raise NotImplementedError()
 
@@ -646,32 +815,41 @@ class MultiGptEncoder(GptEncoder):
         self.n_sentences = n_sentences
 
     def forward(self, inputs, masks, lengths):
-        ''' Expects input vocab indices as (batch, seq_len). Also requires a
-            list of lengths for dynamic batching. '''
+        """ Expects input vocab indices as (batch, seq_len). Also requires a
+            list of lengths for dynamic batching. """
         ctxs, decoder_inits, c_ts, maskss = [], None, None, []
 
-        lstms = [getattr(self, 'lstm' + (str(i) if i != 0 else '')) for i in
-                 range(self.n_sentences)]  # lstms = [self.lstm, self.lstm2, self.lstm3]
-        gpts = [getattr(self, 'gpt' + (str(i) if i != 0 else '')) for i in
-                 range(self.n_sentences)]  # lstms = [self.lstm, self.lstm2, self.lstm3]
+        lstms = [
+            getattr(self, "lstm" + (str(i) if i != 0 else ""))
+            for i in range(self.n_sentences)
+        ]  # lstms = [self.lstm, self.lstm2, self.lstm3]
+        gpts = [
+            getattr(self, "gpt" + (str(i) if i != 0 else ""))
+            for i in range(self.n_sentences)
+        ]  # lstms = [self.lstm, self.lstm2, self.lstm3]
         if not self.multi_share:
             raise NotImplementedError()
 
-        for si, (input, mask, (length, perm_idx), lstmN, gptN) in enumerate(zip(inputs, masks, lengths, lstms, gpts)):
+        for si, (input, mask, (length, perm_idx), lstmN, gptN) in enumerate(
+            zip(inputs, masks, lengths, lstms, gpts)
+        ):
             batch_size = input.size(0)
             seq_max_len = mask.size(1)
-            att_mask = ~mask
+            att_mask = ~mask.bool()
             if self.multi_share:
                 encoder_layer = self.gpt(
-                    input[:, :seq_max_len])  # token_type_ids=None, attention_mask=att_mask.to(device))
+                    input[:, :seq_max_len]
+                )  # token_type_ids=None, attention_mask=att_mask.to(device))
                 embeds = encoder_layer
-            #else:
+            # else:
             #    raise
 
             if self.reverse_input:
                 reversed_embeds = torch.zeros(embeds.size()).to(device)
                 reverse_idx = torch.arange(seq_max_len - 1, -1, -1)
-                reversed_embeds[att_mask] = embeds[:, reverse_idx][att_mask[:, reverse_idx]]
+                reversed_embeds[att_mask] = embeds[:, reverse_idx][
+                    att_mask[:, reverse_idx]
+                ]
                 embeds = reversed_embeds
 
             if not self.update:
@@ -719,16 +897,32 @@ class MultiGptEncoder(GptEncoder):
             # debug: no divide
         decoder_inits = decoder_inits / self.n_sentences
         c_ts = c_ts / self.n_sentences
-        return ctxs, decoder_inits, c_ts, maskss  # (batch, seq_len, hidden_size*num_directions)
-                                 # (batch, hidden_size)
+        return (
+            ctxs,
+            decoder_inits,
+            c_ts,
+            maskss,
+        )  # (batch, seq_len, hidden_size*num_directions)
+        # (batch, hidden_size)
 
 
 class BertEncoder(nn.Module):
 
-    #transformer_hidden_size = 768
+    # transformer_hidden_size = 768
     lstm_num_layers = 1
 
-    def __init__(self, hidden_size, dec_hidden_size, dropout_ratio, bidirectional, update, bert_n_layers, reverse_input, top_lstm, bert_type="small"):
+    def __init__(
+        self,
+        hidden_size,
+        dec_hidden_size,
+        dropout_ratio,
+        bidirectional,
+        update,
+        bert_n_layers,
+        reverse_input,
+        top_lstm,
+        bert_type="small",
+    ):
         super(BertEncoder, self).__init__()
         self.hidden_size = hidden_size
         self.dec_hidden_size = dec_hidden_size
@@ -740,46 +934,64 @@ class BertEncoder(nn.Module):
         self.top_lstm = top_lstm
         self.bert_type = bert_type
         if self.bert_type == "large":
-            self.bert = BertModel.from_pretrained('bert-large-uncased').to(device)
+            self.bert = BertModel.from_pretrained("bert-large-uncased").to(device)
             self.transformer_hidden_size = 1024
-        elif self.bert_type == 'bert_large.bin':
-            bert_large_path = './tasks/R2R/pretrain/bert_l/bert-large-uncased.tar.gz'
+        elif self.bert_type == "bert_large.bin":
+            bert_large_path = "./tasks/R2R/pretrain/bert_l/bert-large-uncased.tar.gz"
             self.bert = BertModel.from_pretrained(bert_large_path).to(device)
             self.transformer_hidden_size = 1024
         else:
-            self.bert = BertModel.from_pretrained('bert-base-uncased').to(device)
+            self.bert = BertModel.from_pretrained("bert-base-uncased").to(device)
             self.transformer_hidden_size = 768
 
-        self.lstm = nn.LSTM(self.transformer_hidden_size*self.bert_n_layers, self.hidden_size, self.lstm_num_layers, batch_first=True,
-                             dropout=dropout_ratio if self.lstm_num_layers>1 else 0, bidirectional=bidirectional)
+        self.lstm = nn.LSTM(
+            self.transformer_hidden_size * self.bert_n_layers,
+            self.hidden_size,
+            self.lstm_num_layers,
+            batch_first=True,
+            dropout=dropout_ratio if self.lstm_num_layers > 1 else 0,
+            bidirectional=bidirectional,
+        )
 
         self.num_directions = 2 if bidirectional else 1
 
-        self.linear_n_in = self.transformer_hidden_size * self.bert_n_layers if not self.top_lstm else hidden_size * self.num_directions
+        self.linear_n_in = (
+            self.transformer_hidden_size * self.bert_n_layers
+            if not self.top_lstm
+            else hidden_size * self.num_directions
+        )
         self.encoder2decoder_ht = nn.Linear(self.linear_n_in, self.dec_hidden_size)
         self.encoder2decoder_ct = nn.Linear(self.linear_n_in, self.dec_hidden_size)
 
-
     def init_state(self, batch_size):
-        ''' Initialize to zero cell states and hidden states.'''
-        h0 = Variable(torch.zeros(self.num_directions, batch_size, self.hidden_size ), requires_grad=False)
-        c0 = Variable(torch.zeros(self.num_directions, batch_size, self.hidden_size ), requires_grad=False)
+        """ Initialize to zero cell states and hidden states."""
+        h0 = Variable(
+            torch.zeros(self.num_directions, batch_size, self.hidden_size),
+            requires_grad=False,
+        )
+        c0 = Variable(
+            torch.zeros(self.num_directions, batch_size, self.hidden_size),
+            requires_grad=False,
+        )
         return h0.to(device), c0.to(device)
 
     def forward(self, inputs, mask, lengths):
-        ''' Expects input vocab indices as (batch, seq_len). Also requires a
-            list of lengths for dynamic batching. '''
+        """ Expects input vocab indices as (batch, seq_len). Also requires a
+            list of lengths for dynamic batching. """
         batch_size = inputs.size(0)
         seq_max_len = mask.size(1)
         att_mask = ~mask
-        all_encoder_layers, pooled_output = self.bert(inputs[:, :seq_max_len], token_type_ids=None,
-                                          attention_mask=att_mask.to(device))
-        embeds = torch.cat(all_encoder_layers[-self.bert_n_layers:],-1)
+        all_encoder_layers, pooled_output = self.bert(
+            inputs[:, :seq_max_len],
+            token_type_ids=None,
+            attention_mask=att_mask.to(device),
+        )
+        embeds = torch.cat(all_encoder_layers[-self.bert_n_layers :], -1)
 
         if self.reverse_input:
             reversed_embeds = torch.zeros(embeds.size()).to(device)
-            reverse_idx = torch.arange(seq_max_len-1,-1,-1)
-            reversed_embeds[att_mask] = embeds[:, reverse_idx][att_mask[:,reverse_idx]]
+            reverse_idx = torch.arange(seq_max_len - 1, -1, -1)
+            reversed_embeds[att_mask] = embeds[:, reverse_idx][att_mask[:, reverse_idx]]
             embeds = reversed_embeds
 
         if not self.update:
@@ -787,7 +999,7 @@ class BertEncoder(nn.Module):
 
         if not self.top_lstm:
             ctx = embeds
-            c_t = self.encoder2decoder_ct(ctx[:,-1])
+            c_t = self.encoder2decoder_ct(ctx[:, -1])
             decoder_init = nn.Tanh()(self.encoder2decoder_ht(pooled_output))
         else:
             h0, c0 = self.init_state(batch_size)
@@ -799,7 +1011,7 @@ class BertEncoder(nn.Module):
                 c_t = torch.cat((enc_c_t[-1], enc_c_t[-2]), 1)
             else:
                 h_t = enc_h_t[-1]
-                c_t = enc_c_t[-1] # (batch, hidden_size)
+                c_t = enc_c_t[-1]  # (batch, hidden_size)
 
             decoder_init = nn.Tanh()(self.encoder2decoder_ht(h_t))
             if self.hidden_size * self.num_directions != self.dec_hidden_size:
@@ -807,21 +1019,48 @@ class BertEncoder(nn.Module):
 
             ctx, lengths = pad_packed_sequence(enc_h, batch_first=True)
         ctx = self.drop(ctx)
-        return ctx, decoder_init, c_t, mask  # (batch, seq_len, hidden_size*num_directions)
-                                 # (batch, hidden_size)
+        return (
+            ctx,
+            decoder_init,
+            c_t,
+            mask,
+        )  # (batch, seq_len, hidden_size*num_directions)
+        # (batch, hidden_size)
 
 
 class MultiBertEncoder(BertEncoder):
-
-    def __init__(self, hidden_size, dec_hidden_size, dropout_ratio, bidirectional, update, bert_n_layers, reverse_input, top_lstm, multi_share, n_sentences, bert_type="small"):
-        super(MultiBertEncoder, self).__init__(hidden_size, dec_hidden_size, dropout_ratio, bidirectional, update, bert_n_layers, reverse_input, top_lstm, bert_type)
+    def __init__(
+        self,
+        hidden_size,
+        dec_hidden_size,
+        dropout_ratio,
+        bidirectional,
+        update,
+        bert_n_layers,
+        reverse_input,
+        top_lstm,
+        multi_share,
+        n_sentences,
+        bert_type="small",
+    ):
+        super(MultiBertEncoder, self).__init__(
+            hidden_size,
+            dec_hidden_size,
+            dropout_ratio,
+            bidirectional,
+            update,
+            bert_n_layers,
+            reverse_input,
+            top_lstm,
+            bert_type,
+        )
 
         self.n_sentences = n_sentences
         self.multi_share = multi_share
 
         for i in range(max(self.n_sentences - 1, 2)):
-            setattr(self, 'bert' + str(i + 1), None)
-            setattr(self, 'lstm' + str(i + 1), None)
+            setattr(self, "bert" + str(i + 1), None)
+            setattr(self, "lstm" + str(i + 1), None)
         if not multi_share:
             raise NotImplementedError()
 
@@ -829,32 +1068,43 @@ class MultiBertEncoder(BertEncoder):
         self.n_sentences = n_sentences
 
     def forward(self, inputs, masks, lengths):
-        ''' Expects input vocab indices as (batch, seq_len). Also requires a
-            list of lengths for dynamic batching. '''
+        """ Expects input vocab indices as (batch, seq_len). Also requires a
+            list of lengths for dynamic batching. """
         ctxs, decoder_inits, c_ts, maskss = [], None, None, []
 
-        lstms = [getattr(self, 'lstm' + (str(i) if i != 0 else '')) for i in
-                 range(self.n_sentences)]  # lstms = [self.lstm, self.lstm2, self.lstm3]
-        berts = [getattr(self, 'bert' + (str(i) if i != 0 else '')) for i in
-                 range(self.n_sentences)]  # lstms = [self.lstm, self.lstm2, self.lstm3]
+        lstms = [
+            getattr(self, "lstm" + (str(i) if i != 0 else ""))
+            for i in range(self.n_sentences)
+        ]  # lstms = [self.lstm, self.lstm2, self.lstm3]
+        berts = [
+            getattr(self, "bert" + (str(i) if i != 0 else ""))
+            for i in range(self.n_sentences)
+        ]  # lstms = [self.lstm, self.lstm2, self.lstm3]
         if not self.multi_share:
             raise NotImplementedError()
 
-        for si, (input, mask, (length, perm_idx), lstmN, bertN) in enumerate(zip(inputs, masks, lengths, lstms, berts)):
+        for si, (input, mask, (length, perm_idx), lstmN, bertN) in enumerate(
+            zip(inputs, masks, lengths, lstms, berts)
+        ):
             batch_size = input.size(0)
             seq_max_len = mask.size(1)
-            att_mask = ~mask
+            att_mask = ~mask.bool()
             if self.multi_share:
-                all_encoder_layers, pooled_output = self.bert(input[:, :seq_max_len], token_type_ids=None,
-                                                              attention_mask=att_mask.to(device))
-                embeds = torch.cat(all_encoder_layers[-self.bert_n_layers:], -1)
-            #else:
+                all_encoder_layers, pooled_output = self.bert(
+                    input[:, :seq_max_len],
+                    token_type_ids=None,
+                    attention_mask=att_mask.to(device),
+                )
+                embeds = torch.cat(all_encoder_layers[-self.bert_n_layers :], -1)
+            # else:
             #    raise
 
             if self.reverse_input:
                 reversed_embeds = torch.zeros(embeds.size()).to(device)
-                reverse_idx = torch.arange(seq_max_len-1,-1,-1)
-                reversed_embeds[att_mask] = embeds[:, reverse_idx][att_mask[:,reverse_idx]]
+                reverse_idx = torch.arange(seq_max_len - 1, -1, -1)
+                reversed_embeds[att_mask] = embeds[:, reverse_idx][
+                    att_mask[:, reverse_idx]
+                ]
                 embeds = reversed_embeds
 
             if not self.update:
@@ -862,7 +1112,7 @@ class MultiBertEncoder(BertEncoder):
 
             if not self.top_lstm:
                 ctx = embeds
-                c_t = self.encoder2decoder_ct(ctx[:,-1])
+                c_t = self.encoder2decoder_ct(ctx[:, -1])
                 decoder_init = nn.Tanh()(self.encoder2decoder_ht(pooled_output))
             else:
                 h0, c0 = self.init_state(batch_size)
@@ -874,7 +1124,7 @@ class MultiBertEncoder(BertEncoder):
                     c_t = torch.cat((enc_c_t[-1], enc_c_t[-2]), 1)
                 else:
                     h_t = enc_h_t[-1]
-                    c_t = enc_c_t[-1] # (batch, hidden_size)
+                    c_t = enc_c_t[-1]  # (batch, hidden_size)
 
                 decoder_init = nn.Tanh()(self.encoder2decoder_ht(h_t))
                 if self.hidden_size * self.num_directions != self.dec_hidden_size:
@@ -903,16 +1153,31 @@ class MultiBertEncoder(BertEncoder):
         # debug: no divide
         decoder_inits = decoder_inits / self.n_sentences
         c_ts = c_ts / self.n_sentences
-        return ctxs, decoder_inits, c_ts, maskss  # (batch, seq_len, hidden_size*num_directions)
-                                 # (batch, hidden_size)
+        return (
+            ctxs,
+            decoder_inits,
+            c_ts,
+            maskss,
+        )  # (batch, seq_len, hidden_size*num_directions)
+        # (batch, hidden_size)
 
 
 class EncoderLSTM(nn.Module):
-    ''' Encodes navigation instructions, returning hidden state context (for
-        attention methods) and a decoder initial state. '''
+    """ Encodes navigation instructions, returning hidden state context (for
+        attention methods) and a decoder initial state. """
 
-    def __init__(self, vocab_size, embedding_size, hidden_size, dec_hidden_size, padding_idx,
-                            dropout_ratio, glove, bidirectional=False, num_layers=1):
+    def __init__(
+        self,
+        vocab_size,
+        embedding_size,
+        hidden_size,
+        dec_hidden_size,
+        padding_idx,
+        dropout_ratio,
+        glove,
+        bidirectional=False,
+        num_layers=1,
+    ):
         super(EncoderLSTM, self).__init__()
         self.embedding_size = embedding_size
         self.hidden_size = hidden_size
@@ -924,35 +1189,47 @@ class EncoderLSTM(nn.Module):
         self.use_glove = glove is not None
 
         if self.use_glove:
-            print('Using GloVe embedding')
+            print("Using GloVe embedding")
             self.embedding.weight.data[...] = torch.from_numpy(glove)
             self.embedding.weight.requires_grad = False
-        self.lstm = nn.LSTM(embedding_size, hidden_size, self.num_layers, batch_first=True,
-                            dropout=dropout_ratio if self.num_layers>1 else 0, bidirectional=bidirectional)
-        self.encoder2decoder = nn.Linear(hidden_size * self.num_directions, dec_hidden_size)
-        self.encoder2decoder_ct = nn.Linear(hidden_size * self.num_directions, dec_hidden_size)
-        #if hidden_size * self.num_directions != dec_hidden_size:
+        self.lstm = nn.LSTM(
+            embedding_size,
+            hidden_size,
+            self.num_layers,
+            batch_first=True,
+            dropout=dropout_ratio if self.num_layers > 1 else 0,
+            bidirectional=bidirectional,
+        )
+        self.encoder2decoder = nn.Linear(
+            hidden_size * self.num_directions, dec_hidden_size
+        )
+        self.encoder2decoder_ct = nn.Linear(
+            hidden_size * self.num_directions, dec_hidden_size
+        )
+        # if hidden_size * self.num_directions != dec_hidden_size:
         #    self.encoder2decoder_ct = nn.Linear(hidden_size * self.num_directions, dec_hidden_size)
 
     def init_state(self, batch_size):
-        ''' Initialize to zero cell states and hidden states.'''
-        h0 = Variable(torch.zeros(
-            self.num_layers * self.num_directions,
-            batch_size,
-            self.hidden_size
-        ), requires_grad=False)
-        c0 = Variable(torch.zeros(
-            self.num_layers * self.num_directions,
-            batch_size,
-            self.hidden_size
-        ), requires_grad=False)
+        """ Initialize to zero cell states and hidden states."""
+        h0 = Variable(
+            torch.zeros(
+                self.num_layers * self.num_directions, batch_size, self.hidden_size
+            ),
+            requires_grad=False,
+        )
+        c0 = Variable(
+            torch.zeros(
+                self.num_layers * self.num_directions, batch_size, self.hidden_size
+            ),
+            requires_grad=False,
+        )
         return h0.to(device), c0.to(device)
 
     def forward(self, inputs, mask, lengths):
-        ''' Expects input vocab indices as (batch, seq_len). Also requires a 
-            list of lengths for dynamic batching. '''
+        """ Expects input vocab indices as (batch, seq_len). Also requires a 
+            list of lengths for dynamic batching. """
         batch_size = inputs.size(0)
-        embeds = self.embedding(inputs)   # (batch, seq_len, embedding_size)
+        embeds = self.embedding(inputs)  # (batch, seq_len, embedding_size)
         if not self.use_glove:
             embeds = self.drop(embeds)
         h0, c0 = self.init_state(batch_size)
@@ -964,55 +1241,98 @@ class EncoderLSTM(nn.Module):
             c_t = torch.cat((enc_c_t[-1], enc_c_t[-2]), 1)
         else:
             h_t = enc_h_t[-1]
-            c_t = enc_c_t[-1] # (batch, hidden_size)
+            c_t = enc_c_t[-1]  # (batch, hidden_size)
 
         decoder_init = nn.Tanh()(self.encoder2decoder(h_t))
         if self.hidden_size * self.num_directions != self.dec_hidden_size:
             c_t = self.encoder2decoder_ct(c_t)
         ctx, lengths = pad_packed_sequence(enc_h, batch_first=True)
         ctx = self.drop(ctx)
-        return ctx,decoder_init,c_t, mask  # (batch, seq_len, hidden_size*num_directions)
-                                 # (batch, hidden_size)
+        return (
+            ctx,
+            decoder_init,
+            c_t,
+            mask,
+        )  # (batch, seq_len, hidden_size*num_directions)
+        # (batch, hidden_size)
 
 
 class EncoderMultiLSTM(EncoderLSTM):
-    ''' Encodes navigation instructions, returning hidden state context (for
-        attention methods) and a decoder initial state. '''
+    """ Encodes navigation instructions, returning hidden state context (for
+        attention methods) and a decoder initial state. """
 
-    def __init__(self, vocab_size, embedding_size, hidden_size, dec_hidden_size, padding_idx,
-                            dropout_ratio, multi_share, n_sentences, glove, params=None, bidirectional=False, num_layers=1):
-        super(EncoderMultiLSTM, self).__init__(vocab_size, embedding_size, hidden_size, dec_hidden_size, padding_idx, dropout_ratio, glove, bidirectional, num_layers)
+    def __init__(
+        self,
+        vocab_size,
+        embedding_size,
+        hidden_size,
+        dec_hidden_size,
+        padding_idx,
+        dropout_ratio,
+        multi_share,
+        n_sentences,
+        glove,
+        params=None,
+        bidirectional=False,
+        num_layers=1,
+    ):
+        super(EncoderMultiLSTM, self).__init__(
+            vocab_size,
+            embedding_size,
+            hidden_size,
+            dec_hidden_size,
+            padding_idx,
+            dropout_ratio,
+            glove,
+            bidirectional,
+            num_layers,
+        )
 
         self.n_sentences = n_sentences
         self.multi_share = multi_share
 
-        self.dec_h_init = params['dec_h_init']
-        self.dec_c_init = params['dec_c_init']
+        self.dec_h_init = params["dec_h_init"]
+        self.dec_c_init = params["dec_c_init"]
 
-        for i in range(max(self.n_sentences-1, 2)):
-            setattr(self, 'lstm'+str(i+1), None)
+        for i in range(max(self.n_sentences - 1, 2)):
+            setattr(self, "lstm" + str(i + 1), None)
 
         if not multi_share:
             for i in range(self.n_sentences - 1):
-                setattr(self, 'lstm' + str(i + 1), nn.LSTM(embedding_size, hidden_size, self.num_layers,
-                                    batch_first=True, dropout=dropout_ratio if self.num_layers > 1 else 0, bidirectional=bidirectional))
+                setattr(
+                    self,
+                    "lstm" + str(i + 1),
+                    nn.LSTM(
+                        embedding_size,
+                        hidden_size,
+                        self.num_layers,
+                        batch_first=True,
+                        dropout=dropout_ratio if self.num_layers > 1 else 0,
+                        bidirectional=bidirectional,
+                    ),
+                )
 
     def set_n_sentences(self, n_sentences):
         self.n_sentences = n_sentences
 
     def forward(self, inputs, masks, lengths):
-        ''' Expects input vocab indices as (batch, seq_len). Also requires a list of lengths for dynamic batching. '''
-        ctxs, decoder_inits, c_ts, maskss = [], None, None ,[]
+        """ Expects input vocab indices as (batch, seq_len). Also requires a list of lengths for dynamic batching. """
+        ctxs, decoder_inits, c_ts, maskss = [], None, None, []
 
-        lstms = [getattr(self, 'lstm'+(str(i) if i!=0 else '')) for i in range(self.n_sentences)]  #  lstms = [self.lstm, self.lstm2, self.lstm3]
+        lstms = [
+            getattr(self, "lstm" + (str(i) if i != 0 else ""))
+            for i in range(self.n_sentences)
+        ]  #  lstms = [self.lstm, self.lstm2, self.lstm3]
         if not self.multi_share:
-            temp=[i for i in range(self.n_sentences)]
+            temp = [i for i in range(self.n_sentences)]
             random.shuffle(temp)
             lstms = [lstms[i] for i in temp]
 
-        for si,(input, mask, (length, perm_idx), lstmN) in enumerate(zip(inputs, masks, lengths, lstms)):
+        for si, (input, mask, (length, perm_idx), lstmN) in enumerate(
+            zip(inputs, masks, lengths, lstms)
+        ):
             batch_size = input.size(0)  # batch, n_sentences, seq_len
-            embeds = self.embedding(input)   # (batch, seq_len, embedding_size)
+            embeds = self.embedding(input)  # (batch, seq_len, embedding_size)
             if not self.use_glove:
                 embeds = self.drop(embeds)
             h0, c0 = self.init_state(batch_size)
@@ -1028,27 +1348,27 @@ class EncoderMultiLSTM(EncoderLSTM):
                 c_t = torch.cat((enc_c_t[-1], enc_c_t[-2]), 1)
             else:
                 h_t = enc_h_t[-1]
-                c_t = enc_c_t[-1] # (batch, hidden_size)
+                c_t = enc_c_t[-1]  # (batch, hidden_size)
 
             # best: dec_h_init (tanh), c_t (origin)
-            if self.dec_h_init == 'linear':
+            if self.dec_h_init == "linear":
                 decoder_init = self.encoder2decoder(h_t)
-            elif self.dec_h_init == 'tanh':
+            elif self.dec_h_init == "tanh":
                 decoder_init = nn.Tanh()(self.encoder2decoder(h_t))
-            else: # bidirectional has no None
+            else:  # bidirectional has no None
                 decoder_init = h_t
 
             # best: dec_c_init: none
-            if self.dec_c_init == 'linear':
+            if self.dec_c_init == "linear":
                 c_t = self.encoder2decoder_ct(c_t)
-            elif self.dec_c_init == 'tanh':
+            elif self.dec_c_init == "tanh":
                 c_t = nn.Tanh()(self.encoder2decoder_ct(c_t))
             else:
                 if self.hidden_size * self.num_directions != self.dec_hidden_size:
                     c_t = self.encoder2decoder_ct(c_t)
 
             # debug
-            #if self.hidden_size * self.num_directions != self.dec_hidden_size:
+            # if self.hidden_size * self.num_directions != self.dec_hidden_size:
             #    if self.dec_c_init == 'linear':
             #        c_t = self.encoder2decoder_ct(c_t)
             #    else:
@@ -1075,22 +1395,27 @@ class EncoderMultiLSTM(EncoderLSTM):
                 c_ts = c_ts + c_t
 
         # debug: no divide
-        #print(self.n_sentences)
-        decoder_inits = decoder_inits/self.n_sentences
-        c_ts = c_ts/self.n_sentences
-        return ctxs, decoder_inits, c_ts, maskss  # (batch, seq_len, hidden_size*num_directions)
-                                 # (batch, hidden_size)
+        # print(self.n_sentences)
+        decoder_inits = decoder_inits / self.n_sentences
+        c_ts = c_ts / self.n_sentences
+        return (
+            ctxs,
+            decoder_inits,
+            c_ts,
+            maskss,
+        )  # (batch, seq_len, hidden_size*num_directions)
+        # (batch, hidden_size)
 
 
 class SoftDotAttention(nn.Module):
-    '''Soft Dot Attention. 
+    """Soft Dot Attention. 
 
     Ref: http://www.aclweb.org/anthology/D15-1166
     Adapted from PyTorch OPEN NMT.
-    '''
+    """
 
     def __init__(self, ctx_hidden_size, dim):
-        '''Initialize layer.'''
+        """Initialize layer."""
         super(SoftDotAttention, self).__init__()
         self.linear_in = nn.Linear(dim, ctx_hidden_size, bias=False)
         self.sm = nn.Softmax(dim=1)
@@ -1098,19 +1423,19 @@ class SoftDotAttention(nn.Module):
         self.tanh = nn.Tanh()
 
     def forward(self, h, context, mask=None, ctx_drop=None):
-        '''Propagate h through the network.
+        """Propagate h through the network.
 
         h: batch x dim
         context: batch x seq_len x dim
         mask: batch x seq_len indices to be masked
-        '''
+        """
         target = self.linear_in(h).unsqueeze(2)  # batch x dim x 1
 
         # Get attention
         attn = torch.bmm(context, target).squeeze(2)  # batch x seq_len
         if mask is not None:
-            # -Inf masking prior to the softmax 
-            attn.data.masked_fill_(mask, -float('inf'))
+            # -Inf masking prior to the softmax
+            attn.data.masked_fill_(mask.bool(), -float("inf"))
         attn = self.sm(attn)
         attn3 = attn.view(attn.size(0), 1, attn.size(1))  # batch x 1 x seq_len
 
@@ -1125,24 +1450,24 @@ class SoftDotAttention(nn.Module):
 
 
 class EltwiseProdScoring(nn.Module):
-    '''
+    """
     Linearly mapping h and v to the same dimension, and do an elementwise
     multiplication and a linear scoring
-    '''
+    """
 
     def __init__(self, h_dim, a_dim, dot_dim=256):
-        '''Initialize layer.'''
+        """Initialize layer."""
         super(EltwiseProdScoring, self).__init__()
         self.linear_in_h = nn.Linear(h_dim, dot_dim, bias=True)
         self.linear_in_a = nn.Linear(a_dim, dot_dim, bias=True)
         self.linear_out = nn.Linear(dot_dim, 1, bias=True)
 
     def forward(self, h, all_u_t, mask=None):
-        '''Propagate h through the network.
+        """Propagate h through the network.
 
         h: batch x h_dim
         all_u_t: batch x a_num x a_dim
-        '''
+        """
         target = self.linear_in_h(h).unsqueeze(1)  # batch x 1 x dot_dim
         context = self.linear_in_a(all_u_t)  # batch x a_num x dot_dim
         eltprod = torch.mul(target, context)  # batch x a_num x dot_dim
@@ -1152,23 +1477,25 @@ class EltwiseProdScoring(nn.Module):
 
 # Speaker-Follower
 class VisualSoftDotAttention(nn.Module):
-    ''' Visual Dot Attention Layer. '''
+    """ Visual Dot Attention Layer. """
 
     def __init__(self, h_dim, v_dim, dot_dim=256):
-        '''Initialize layer.'''
+        """Initialize layer."""
         super(VisualSoftDotAttention, self).__init__()
         self.linear_in_h = nn.Linear(h_dim, dot_dim, bias=True)
         self.linear_in_v = nn.Linear(v_dim, dot_dim, bias=True)
         self.sm = nn.Softmax(dim=1)
 
     def forward(self, h, visual_context, mask=None):
-        '''Propagate h through the network.
+        """Propagate h through the network.
 
         h: batch x h_dim
         visual_context: batch x v_num x v_dim 100x36x2048
-        '''
+        """
         target = self.linear_in_h(h).unsqueeze(2)  # batch x dot_dim x 1
-        context = self.linear_in_v(visual_context)  # batch x v_num x dot_dim; not good here
+        context = self.linear_in_v(
+            visual_context
+        )  # batch x v_num x dot_dim; not good here
 
         # Get attention
         attn = torch.bmm(context, target).squeeze(2)  # batch x v_num
@@ -1180,50 +1507,53 @@ class VisualSoftDotAttention(nn.Module):
 
 
 class LinearFeature(nn.Module):
-    '''
+    """
     Linear mapping h and v to the dimension of the image feature
-    '''
+    """
+
     # TODO: tune this structure
     def __init__(self, h_dim, f_dim):
-        '''Initialize layer.'''
+        """Initialize layer."""
         super(LinearFeature, self).__init__()
         self.linear_in_h = nn.Linear(h_dim, f_dim, bias=True)
-        #self.linear_in_a = nn.Linear(a_dim, f_dim, bias=True)
+        # self.linear_in_a = nn.Linear(a_dim, f_dim, bias=True)
 
-    def forward(self, h, mask=None):  #, u_t
-        '''Propagate h through the network.
+    def forward(self, h, mask=None):  # , u_t
+        """Propagate h through the network.
 
         h: batch x h_dim
         all_u_t: batch x a_num x a_dim
         u_t: batch x a_dim
-        '''
-        target = self.linear_in_h(h) #.unsqueeze(1)  # batch x f_dim
-        #context = self.linear_in_a(u_t)  # batch x f_dim
-        #eltprod = torch.mul(target, context)  # batch x f_dim
+        """
+        target = self.linear_in_h(h)  # .unsqueeze(1)  # batch x f_dim
+        # context = self.linear_in_a(u_t)  # batch x f_dim
+        # eltprod = torch.mul(target, context)  # batch x f_dim
         pred_f = F.relu(target)  # batch x f_dim
-        #pred_f = F.relu(eltprod)  # batch x f_dim
+        # pred_f = F.relu(eltprod)  # batch x f_dim
         return pred_f
 
+
 class NonLinearFeature(nn.Module):
-    '''
+    """
     Non-Linear mapping hiddens to the dimension of the image feature
     better: h_dim > f_dim
-    '''
+    """
+
     # TODO: tune this structure
     def __init__(self, i_dim, h_dim, f_dim):
-        ''' Initialize layer. '''
+        """ Initialize layer. """
         super(NonLinearFeature, self).__init__()
         self.linear_in_h = nn.Linear(i_dim, h_dim, bias=True)
         self.linear_h_o = nn.Linear(h_dim, f_dim, bias=True)
 
-        #self.linear_in_a = nn.Linear(a_dim, f_dim, bias=True)
+        # self.linear_in_a = nn.Linear(a_dim, f_dim, bias=True)
 
     def forward(self, h, mask=None):
-        '''Propagate h through the network.
+        """Propagate h through the network.
         h: batch x h_dim
         all_u_t: batch x a_num x a_dim
         u_t: batch x a_dim
-        '''
+        """
 
         h_ins = self.linear_in_h(h)
         h_outs = F.relu(h_ins)
@@ -1237,13 +1567,13 @@ class NonLinearFeature(nn.Module):
 class DeconvFeature(nn.Module):
     def __init__(self, h_dim, f_dim):
         super(DeconvFeature, self).__init__()
-        self.fc = nn.Linear(h_dim, 16*15*15)
+        self.fc = nn.Linear(h_dim, 16 * 15 * 15)
         # self.setting = setting
         # if setting==1:
         #     self.deconv = nn.ConvTranspose2d(16, 4, kernel_size=4,stride=2,padding=0)
         #     self.fc2 = nn.Linear(4096, f_dim)
         # if setting==2:
-        self.deconv = nn.ConvTranspose2d(16, 2, kernel_size=4,stride=2,padding=0)
+        self.deconv = nn.ConvTranspose2d(16, 2, kernel_size=4, stride=2, padding=0)
 
     def forward(self, x):
         x = self.fc(x).view([-1, 16, 15, 15])
@@ -1261,10 +1591,25 @@ def torch_max_not_return_idx(input, axis):
 
 
 class AttnDecoderLSTM(nn.Module):
-    ''' An unrolled LSTM with attention over instructions for decoding navigation actions. '''
+    """ An unrolled LSTM with attention over instructions for decoding navigation actions. """
 
-    def __init__(self, input_action_size, output_action_size, embedding_size, ctx_hidden_size, hidden_size,
-                      dropout_ratio, feature_size, panoramic, action_space, ctrl_feature, ctrl_f_net, att_ctx_merge, ctx_dropout_ratio, params=None):
+    def __init__(
+        self,
+        input_action_size,
+        output_action_size,
+        embedding_size,
+        ctx_hidden_size,
+        hidden_size,
+        dropout_ratio,
+        feature_size,
+        panoramic,
+        action_space,
+        ctrl_feature,
+        ctrl_f_net,
+        att_ctx_merge,
+        ctx_dropout_ratio,
+        params=None,
+    ):
         super(AttnDecoderLSTM, self).__init__()
         self.embedding_size = embedding_size
         self.feature_size = feature_size + (128 if panoramic else 0)
@@ -1277,35 +1622,43 @@ class AttnDecoderLSTM(nn.Module):
         self.ctrl_f_net = ctrl_f_net
         self.ctx_drop = nn.Dropout(p=ctx_dropout_ratio)
 
-        self.dec_h_type = params['dec_h_type']
+        self.dec_h_type = params["dec_h_type"]
 
         action_hidden_size = hidden_size
         self.att_ctx_merge = None
-        if att_ctx_merge in ['mean', 'cat', 'max', 'sum']:
-            if att_ctx_merge == 'cat':
+        if att_ctx_merge in ["mean", "cat", "max", "sum"]:
+            if att_ctx_merge == "cat":
                 self.att_ctx_merge = torch.flatten
                 action_hidden_size = 3 * hidden_size
-            elif att_ctx_merge == 'mean':
+            elif att_ctx_merge == "mean":
                 self.att_ctx_merge = torch.mean
-            elif att_ctx_merge == 'max':
+            elif att_ctx_merge == "max":
                 self.att_ctx_merge = torch_max_not_return_idx
-            elif att_ctx_merge == 'sum':
+            elif att_ctx_merge == "sum":
                 self.att_ctx_merge = torch.sum
 
         if not self.panoramic:
-            LSTM_n_in = embedding_size + feature_size  # action_embedding + original single view feature
+            LSTM_n_in = (
+                embedding_size + feature_size
+            )  # action_embedding + original single view feature
         else:
             if self.action_space == 6:
-                LSTM_n_in = embedding_size + feature_size + self.feature_size  # attented multi-view feature (single feature +128)
+                LSTM_n_in = (
+                    embedding_size + feature_size + self.feature_size
+                )  # attented multi-view feature (single feature +128)
             else:  # if self.action_space == -1:
-                LSTM_n_in = self.feature_size * 2  # action feature + attented multi-view feature
-                #LSTM_n_in = feature_size + self.feature_size * 2  # img feature + action feature + attented multi-view feature
+                LSTM_n_in = (
+                    self.feature_size * 2
+                )  # action feature + attented multi-view feature
+                # LSTM_n_in = feature_size + self.feature_size * 2  # img feature + action feature + attented multi-view feature
 
         self.lstm = nn.LSTMCell(LSTM_n_in, hidden_size)
         self.attention_layer = SoftDotAttention(ctx_hidden_size, hidden_size)
         # panoramic feature
         if self.panoramic:
-            self.visual_attention_layer = VisualSoftDotAttention(hidden_size, self.feature_size)
+            self.visual_attention_layer = VisualSoftDotAttention(
+                hidden_size, self.feature_size
+            )
         else:
             self.visual_attention_layer = None
 
@@ -1315,34 +1668,54 @@ class AttnDecoderLSTM(nn.Module):
             self.embedding = nn.Embedding(input_action_size, embedding_size)
             self.decoder2action = nn.Linear(action_hidden_size, output_action_size)
         else:
-            self.u_begin = Variable(torch.zeros(self.feature_size), requires_grad=False).to(device)
-            self.decoder2action = EltwiseProdScoring(action_hidden_size, self.feature_size)
-            #self.decoder2action = EltwiseProdScoring(action_hidden_size+self.feature_size, self.feature_size) # debug
+            self.u_begin = Variable(
+                torch.zeros(self.feature_size), requires_grad=False
+            ).to(device)
+            self.decoder2action = EltwiseProdScoring(
+                action_hidden_size, self.feature_size
+            )
+            # self.decoder2action = EltwiseProdScoring(action_hidden_size+self.feature_size, self.feature_size) # debug
 
         if self.ctrl_feature:
-            if self.ctrl_f_net =='deconv':
+            if self.ctrl_f_net == "deconv":
                 self.decoder2feature = DeconvFeature(action_hidden_size, feature_size)
-            elif self.ctrl_f_net == 'linear':  # linear
+            elif self.ctrl_f_net == "linear":  # linear
                 self.decoder2feature = LinearFeature(action_hidden_size, feature_size)
-            elif self.ctrl_f_net == 'imglinear':
-                self.decoder2feature = LinearFeature(action_hidden_size + feature_size, feature_size)
-            elif self.ctrl_f_net == 'nonlinear':
-                self.decoder2feature = NonLinearFeature(action_hidden_size, 1024, feature_size)
-            elif self.ctrl_f_net == 'imgnl':
-                self.decoder2feature = NonLinearFeature(action_hidden_size + feature_size, 1024, feature_size)
+            elif self.ctrl_f_net == "imglinear":
+                self.decoder2feature = LinearFeature(
+                    action_hidden_size + feature_size, feature_size
+                )
+            elif self.ctrl_f_net == "nonlinear":
+                self.decoder2feature = NonLinearFeature(
+                    action_hidden_size, 1024, feature_size
+                )
+            elif self.ctrl_f_net == "imgnl":
+                self.decoder2feature = NonLinearFeature(
+                    action_hidden_size + feature_size, 1024, feature_size
+                )
         else:
             self.decoder2feature = None
 
-    def forward(self, action_prev, u_prev, u_features,  # teacher_u_feature,
-                feature, feature_all, h_0, c_0, ctx, ctx_mask=None):  #, action_prev_feature
-        ''' Takes a single step in the decoder LSTM (allowing sampling).
+    def forward(
+        self,
+        action_prev,
+        u_prev,
+        u_features,  # teacher_u_feature,
+        feature,
+        feature_all,
+        h_0,
+        c_0,
+        ctx,
+        ctx_mask=None,
+    ):  # , action_prev_feature
+        """ Takes a single step in the decoder LSTM (allowing sampling).
         action: batch x 1
         feature: batch x feature_size
         h_0: batch x hidden_size
         c_0: batch x hidden_size
         ctx: batch x seq_len x dim
         ctx_mask: batch x seq_len - indices to be masked
-        '''
+        """
 
         if self.panoramic:  # feature.dim()==3:
             feature2, alpha_v = self.visual_attention_layer(h_0, feature_all)
@@ -1350,23 +1723,30 @@ class AttnDecoderLSTM(nn.Module):
         if self.action_space == 6:
             if self.panoramic:
                 feature = torch.cat((feature, feature2), 1)
-            action_embeds = self.embedding(action_prev.view(-1, 1))  # (batch, 1, embedding_size)
+            action_embeds = self.embedding(
+                action_prev.view(-1, 1)
+            )  # (batch, 1, embedding_size)
             action_embeds = action_embeds.squeeze()
-        else: # bug: todo
-            #feature = feature2
+        else:  # bug: todo
+            # feature = feature2
             action_embeds = u_prev
 
         concat_input = torch.cat((action_embeds, feature2), 1)
-        #concat_input = torch.cat((feature, action_embeds, feature2), 1)
+        # concat_input = torch.cat((feature, action_embeds, feature2), 1)
         drop = self.drop(concat_input)
 
         h_1, c_1 = self.lstm(drop, (h_0, c_0))
         h_1_drop = self.drop(h_1)
 
         if self.att_ctx_merge is not None:
-            temp, alpha = torch.zeros(h_1_drop.size(0), len(ctx), self.hidden_size).to(device), []
+            temp, alpha = (
+                torch.zeros(h_1_drop.size(0), len(ctx), self.hidden_size).to(device),
+                [],
+            )
             for si in range(len(ctx)):
-                h_tilde, alpha_si = self.attention_layer(h_1_drop, ctx[si], ctx_mask[si], self.ctx_drop)
+                h_tilde, alpha_si = self.attention_layer(
+                    h_1_drop, ctx[si], ctx_mask[si], self.ctx_drop
+                )
                 temp[:, si, :] = h_tilde
                 alpha.append(alpha_si)  # for plot
 
@@ -1378,18 +1758,18 @@ class AttnDecoderLSTM(nn.Module):
             logit = self.decoder2action(h_tilde)  # (100, 6)
         else:
             logit = self.decoder2action(h_tilde, u_features)
-            #logit = self.decoder2action(action_input, u_features)
+            # logit = self.decoder2action(action_input, u_features)
 
         pred_f = None
         if self.ctrl_feature:
-            if self.ctrl_f_net == 'imglinear' or self.ctrl_f_net == 'imgnl': #
-                #aux_input = torch.cat((h_1_drop, feature), 1) # with img feature h_1_drop
+            if self.ctrl_f_net == "imglinear" or self.ctrl_f_net == "imgnl":  #
+                # aux_input = torch.cat((h_1_drop, feature), 1) # with img feature h_1_drop
                 aux_input = torch.cat((h_tilde, feature), 1)  # with img feature h_tilde
                 pred_f = self.decoder2feature(aux_input)  # , teacher_u_feature)
             else:
-                pred_f = self.decoder2feature(h_tilde) #, teacher_u_feature)
+                pred_f = self.decoder2feature(h_tilde)  # , teacher_u_feature)
 
-        if self.dec_h_type == 'vc':
+        if self.dec_h_type == "vc":
             return h_tilde, c_1, alpha, logit, pred_f  # h_tilde
         else:
-            return h_1, c_1, alpha, logit, pred_f # old verion
+            return h_1, c_1, alpha, logit, pred_f  # old verion

@@ -15,59 +15,101 @@ class Feature:
         self._load()
 
     def _load(self):
-        print('Loading image features from %s' % str(self.feature_store))
-        if self.feature_store == 'img_features/ResNet-152-imagenet.tsv':
-            self.features, self.image_h, self.image_w, self.vfov = self.__loadResNet(self.feature_store)
+        print("Loading image features from %s" % str(self.feature_store))
+        if self.feature_store == "img_features/ResNet-152-imagenet.tsv":
+            self.features, self.image_h, self.image_w, self.vfov = self.__loadResNet(
+                self.feature_store
+            )
             self.rollout = self.rollout_single
-        elif self.feature_store == 'img_features/bottom_up':
-            self.features, self.image_h, self.image_w, self.vfov = self.__loadBottomUp(self.feature_store)
+        elif self.feature_store == "img_features/bottom_up":
+            self.features, self.image_h, self.image_w, self.vfov = self.__loadBottomUp(
+                self.feature_store
+            )
             self.rollout = self.rollout_single
-        elif self.feature_store == 'img_features/ResNet-152-imagenet.tsv+img_features/bottom_up':
-            features_resnet, self.image_h, self.image_w, self.vfov = self.__loadResNet(self.feature_store.split('+')[0])
-            features_bottom, _, _, _ = self.__loadBottomUp(self.feature_store.split('+')[1])
-            self.features = features_resnet #features_bottom
-            print('resnet: %d, faster r-cnn: %d' % (len(features_resnet.keys()), len(features_bottom.keys())))
-            #assert len(features_bottom.keys()) == len(features_resnet.keys())
+        elif (
+            self.feature_store
+            == "img_features/ResNet-152-imagenet.tsv+img_features/bottom_up"
+        ):
+            features_resnet, self.image_h, self.image_w, self.vfov = self.__loadResNet(
+                self.feature_store.split("+")[0]
+            )
+            features_bottom, _, _, _ = self.__loadBottomUp(
+                self.feature_store.split("+")[1]
+            )
+            self.features = features_resnet  # features_bottom
+            print(
+                "resnet: %d, faster r-cnn: %d"
+                % (len(features_resnet.keys()), len(features_bottom.keys()))
+            )
+            # assert len(features_bottom.keys()) == len(features_resnet.keys())
             not_in = 0
             for key in features_resnet:
                 if key in features_bottom:
-                    self.features[key] = np.hstack([features_resnet[key], features_bottom[key]])
+                    self.features[key] = np.hstack(
+                        [features_resnet[key], features_bottom[key]]
+                    )
                 else:
                     not_in += 1
                     padding_matrix = np.zeros(features_resnet[key].shape)
-                    self.features[key] = np.hstack([features_resnet[key], padding_matrix])
-            print('not overlap: %d' % (not_in))
-            #for key in features_bottom.keys(): # error here
+                    self.features[key] = np.hstack(
+                        [features_resnet[key], padding_matrix]
+                    )
+            print("not overlap: %d" % (not_in))
+            # for key in features_bottom.keys(): # error here
             #    self.features[key] = np.hstack([features_resnet[key], features_bottom[key]])
             self.rollout = self.rollout_single
-        elif self.feature_store == 'img_features/ResNet-152-imagenet.tsv+img_features/bottom_up+bbox':
-            features_resnet, self.image_h, self.image_w, self.vfov = self.__loadResNet(self.feature_store.split('+')[0])
-            features_bottom, _, _, _ = self.__loadBottomUp(self.feature_store.split('+')[1])
-            self.features = features_resnet #features_bottom
+        elif (
+            self.feature_store
+            == "img_features/ResNet-152-imagenet.tsv+img_features/bottom_up+bbox"
+        ):
+            features_resnet, self.image_h, self.image_w, self.vfov = self.__loadResNet(
+                self.feature_store.split("+")[0]
+            )
+            features_bottom, _, _, _ = self.__loadBottomUp(
+                self.feature_store.split("+")[1]
+            )
+            self.features = features_resnet  # features_bottom
             for key in features_bottom.keys():
-                self.features[key] = np.hstack([features_resnet[key], features_bottom[key]])
-            self.rollout = functools.partial(self.rollout_with_bbox, self.feature_store.split('+')[1])
+                self.features[key] = np.hstack(
+                    [features_resnet[key], features_bottom[key]]
+                )
+            self.rollout = functools.partial(
+                self.rollout_with_bbox, self.feature_store.split("+")[1]
+            )
         else:
-            print('Image features not provided')
-            self.rollout = (lambda a,b,c: None) if not self.features else self.rollout_single
+            print("Image features not provided")
+            self.rollout = (
+                (lambda a, b, c: None) if not self.features else self.rollout_single
+            )
             self.features, self.image_h, self.image_w, self.vfov = None, 480, 640, 60
 
     def __loadResNet(self, feature_store):
-        tsv_fieldnames = ['scanId', 'viewpointId', 'image_w', 'image_h', 'vfov', 'features']
+        tsv_fieldnames = [
+            "scanId",
+            "viewpointId",
+            "image_w",
+            "image_h",
+            "vfov",
+            "features",
+        ]
         features, image_h, image_w, vfov = {}, 480, 640, 60
 
         read_num = 0
-        while (read_num < 20):
-            print('read_num %d' % (read_num))
+        while read_num < 20:
+            print("read_num %d" % (read_num))
             try:
                 with open(feature_store, "r+") as tsv_in_file:
-                    reader = csv.DictReader(tsv_in_file, delimiter='\t', fieldnames=tsv_fieldnames)
+                    reader = csv.DictReader(
+                        tsv_in_file, delimiter="\t", fieldnames=tsv_fieldnames
+                    )
                     for item in reader:
-                        image_h = int(item['image_h'])
-                        image_w = int(item['image_w'])
-                        vfov = int(item['vfov'])
-                        long_id = item['scanId'] + '_' + item['viewpointId']
-                        features[long_id] = np.frombuffer(base64.b64decode(item['features']), dtype=np.float32).reshape((36, 2048))
+                        image_h = int(item["image_h"])
+                        image_w = int(item["image_w"])
+                        vfov = int(item["vfov"])
+                        long_id = item["scanId"] + "_" + item["viewpointId"]
+                        features[long_id] = np.frombuffer(
+                            base64.b64decode(item["features"]), dtype=np.float32
+                        ).reshape((36, 2048))
                         if self.max_load > 0 and len(features) >= self.max_load:
                             break
                 break
@@ -94,15 +136,15 @@ class Feature:
         temp_fname = os.path.join(temp_folder, os.listdir(temp_folder)[0])
 
         read_size_num = 0
-        while (read_size_num < 20):
-            print('read_size_num %d' % (read_size_num))
+        while read_size_num < 20:
+            print("read_size_num %d" % (read_size_num))
             try:
-                with h5py.File(temp_fname, 'r') as f:
-                    image_h = int(f['0']['image_h'][()])#.value)
-                    image_w = int(f['0']['image_w'][()]) #.value)
+                with h5py.File(temp_fname, "r") as f:
+                    image_h = int(f["0"]["image_h"][()])  # .value)
+                    image_w = int(f["0"]["image_w"][()])  # .value)
                     view_size = len(f)  # 36
-                    feature_size = (f['0']['features'][()]).shape[1]
-                    #feature_size = (f['0']['features'].value).shape[1]  # 2048
+                    feature_size = (f["0"]["features"][()]).shape[1]
+                    # feature_size = (f['0']['features'].value).shape[1]  # 2048
                 break
             except OSError:
                 read_size_num += 1
@@ -116,26 +158,29 @@ class Feature:
                 fname = os.path.join(folder, viewpointId_h5)
 
                 read_file_num = 0
-                while(read_file_num < 20):
+                while read_file_num < 20:
                     try:
                         with h5py.File(fname, "r") as viewpoint:
                             assert len(viewpoint.keys()) == 36
-                            long_id = scanId + '_' + viewpointId_h5[:-3]  # rstrip('.h5')
+                            long_id = (
+                                scanId + "_" + viewpointId_h5[:-3]
+                            )  # rstrip('.h5')
                             temp = np.zeros((view_size, feature_size))
                             for image_id in range(36):
                                 item = viewpoint[str(image_id)]
-                                temp[image_id, :] = np.mean(item['features'][()], 0)
-                                #temp[image_id, :] = np.mean(item['features'].value, 0)
+                                temp[image_id, :] = np.mean(item["features"][()], 0)
+                                # temp[image_id, :] = np.mean(item['features'].value, 0)
                             features[long_id] = temp
                         break
                     except OSError:
                         read_file_num += 1
 
-                if self.max_load > 0 and len(features) >= self.max_load: break
+                if self.max_load > 0 and len(features) >= self.max_load:
+                    break
         return features, image_h, image_w, vfov
 
     def rollout_single(self, scanId, viewpointId, viewIndex):
-        long_id = scanId + '_' + viewpointId
+        long_id = scanId + "_" + viewpointId
         feature = self.features[long_id]
         if not self.panoramic:
             feature = feature[viewIndex, :]
@@ -145,10 +190,10 @@ class Feature:
 
     @functools.lru_cache(maxsize=20000)
     def rollout_with_bbox(self, feature_store, scanId, viewpointId, viewIndex):
-        long_id = scanId + '_' + viewpointId
-        fname = os.path.join(feature_store, long_id+'.h5')
+        long_id = scanId + "_" + viewpointId
+        fname = os.path.join(feature_store, long_id + ".h5")
         with h5py.File(fname, "r") as viewpoint:
             assert len(viewpoint.keys()) == 36
             item = viewpoint[str(viewIndex)]
-            features = item['features'].value
+            features = item["features"].value
         return features
