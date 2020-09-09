@@ -45,15 +45,19 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
     parser.add_argument(
+        "--name",
+        type=str,
+        default="press",
+        help="name of the experiment (for TensorBoard)",
+    )
+    parser.add_argument(
         "--train_vocab",
-        dest="train_vocab",
         type=str,
         default="train_vocab.txt",
         help="train_vocab filename (in snapshots folder)",
     )
     parser.add_argument(
         "--trainval_vocab",
-        dest="trainval_vocab",
         type=str,
         default="trainval_vocab.txt",
         help="trainval_vocab filename (in snapshots folder)",
@@ -615,11 +619,6 @@ if __name__ == "__main__":
     )
 
     parser.add_argument("--seed", type=int, default=1, help="random seed")
-    parser.add_argument(
-        "--philly",
-        action="store_true",
-        help="program runs on Philly, used to redirect write_model_path",
-    )
     parser.add_argument("--dump_result", action="store_true", help="dump result file")
 
     parser.add_argument("--test_A", action="store_true", help="testing_settingA")
@@ -797,7 +796,6 @@ submit_splits = train_splits + val_splits
 
 nav_graphs = None  # navigable loc cache
 
-philly = params["philly"]
 seed = params["seed"]
 
 
@@ -822,22 +820,9 @@ decoder_params["dec_h_type"] = params["dec_h_type"]
 navigable_locs_path = "tasks/R2R/data"
 pretrain_model_path = params["pretrain_model_path"]
 
-if philly:  # use philly
-    print("Info: Use Philly, all the output folders are reset.")
-    RESULT_DIR = os.path.join(os.getenv("PT_OUTPUT_DIR"), params["result_dir"])
-    PLOT_DIR = os.path.join(os.getenv("PT_OUTPUT_DIR"), params["plot_dir"])
-    SNAPSHOT_DIR = os.path.join(os.getenv("PT_OUTPUT_DIR"), params["snapshot_dir"])
-    TRAIN_VOCAB = os.path.join(SNAPSHOT_DIR, params["train_vocab"])
-    TRAINVAL_VOCAB = os.path.join(SNAPSHOT_DIR, params["trainval_vocab"])
-    navigable_locs_path = os.path.join(os.getenv("PT_OUTPUT_DIR"), "tasks/R2R/data")
-
-    print("RESULT_DIR", RESULT_DIR)
-    print("PLOT_DIR", PLOT_DIR)
-    print("SNAPSHOT_DIR", SNAPSHOT_DIR)
-    print("TRAIN_VOC", TRAIN_VOCAB)
-
 
 def train(
+    opts,
     train_env,
     train_Eval,
     encoder,
@@ -855,6 +840,7 @@ def train(
     """ Train on training set, validating on both seen and unseen. """
 
     data_log = defaultdict(list)
+    tb = SummaryWriter(log_dir=opts.result_dir)
 
     agent = Seq2SeqAgent(
         train_env,
@@ -1130,14 +1116,16 @@ def train(
         train_losses = np.array(agent.losses)
         assert len(train_losses) == interval
         train_loss_avg = np.average(train_losses)
-        data_log["train loss"].append(train_loss_avg)
-        loss_str = "train loss: %.4f" % train_loss_avg
+        data_log["train_loss"].append(train_loss_avg)
+        loss_str = "train_loss: %.4f" % train_loss_avg
+        tb.add_scalar("train_loss", train_loss_avg, idx)
 
         if ctrl_feature:
             if agent.decoder.ctrl_feature:
                 train_loss_ctrl_f_avg = np.average(np.array(agent.losses_ctrl_f))
                 data_log["loss_ctrl_f"].append(train_loss_ctrl_f_avg)
                 loss_str += " loss_ctrl_f: %.4f" % train_loss_ctrl_f_avg
+                tb.add_scalar("train_ctrl_loss", train_loss_ctrl_f_avg, idx)
             else:
                 data_log["loss_ctrl_f"].append(0.0)
 
@@ -1176,6 +1164,7 @@ def train(
             loss_str += env_loss_str
             success_rate += score_summary["success_rate"]
             spl += score_summary["spl"]
+            tb.add_scalars(env_name, score_summary, idx)
 
         candidate_score = current_best(data_log, -1, score_name)
 
@@ -1335,7 +1324,7 @@ def setup():
             json.dump(params, fp)
 
 
-def test_submission():
+def test_submission(opts):
     """ Train on combined training and validation sets, and generate test submission. """
     # TODO: think how to add pretraining here
     setup()
@@ -1461,7 +1450,9 @@ def test_submission():
     print(encoder)
     print(decoder)
 
-    train(train_env, train_Eval, encoder, 3, decoder, monotonic, n_iters, None, -1)
+    train(
+        opts, train_env, train_Eval, encoder, 3, decoder, monotonic, n_iters, None, -1
+    )
 
     # Generate test submission
     test_env = R2RBatch(
@@ -1499,7 +1490,7 @@ def test_submission():
     agent.write_results(dump_result)
 
 
-def train_val(n_iters_resume=0):
+def train_val(opts, n_iters_resume=0):
     """ Train on the training set, and validate on seen and unseen splits. """
 
     global n_iters_pretrain_resume
@@ -1722,8 +1713,9 @@ def train_val(n_iters_resume=0):
             # cur_splits_array = pretrain_env.splits
             cur_splits_array = ["ss", "pretrain"]
 
-            # best_model_ss_pretrain_iter = train(pretrain_env, None, encoder, decoder, None, ss_n_iters, pretrain_env.splits, pretrain_score_name, -1, log_every, val_envs=val_envs, n_iters_resume=n_iters_pretrain_resume)
+            # best_model_ss_pretrain_iter = train(opts, pretrain_env, None, encoder, decoder, None, ss_n_iters, pretrain_env.splits, pretrain_score_name, -1, log_every, val_envs=val_envs, n_iters_resume=n_iters_pretrain_resume)
             best_model_ss_pretrain_iter = train(
+                opts,
                 pretrain_env,
                 None,
                 encoder,
@@ -1751,6 +1743,7 @@ def train_val(n_iters_resume=0):
             # training; may need to cancel training for pre-train
             cur_splits_array = ["pretrain"]
             n_iters_resume = train(
+                opts,
                 pretrain_env,
                 None,
                 encoder,
@@ -1796,6 +1789,7 @@ def train_val(n_iters_resume=0):
         # resume_splits_array = ['pretrain']
         cur_splits_array = ["ss", "train"]
         best_model_ss_iter = train(
+            opts,
             train_env,
             train_Eval,
             encoder,
@@ -1822,6 +1816,7 @@ def train_val(n_iters_resume=0):
     # resume_splits_array = ['ss', 'train']
     cur_splits_array = ["train"]
     best_model_iter = train(
+        opts,
         train_env,
         train_Eval,
         encoder,
@@ -2241,7 +2236,7 @@ def test_env(
 
 if is_train:
     assert beam_size == 1
-    N_ITERS_RESUME = train_val(N_ITERS_RESUME)  # resume from iter
+    N_ITERS_RESUME = train_val(args, N_ITERS_RESUME)  # resume from iter
 else:
     load_test(N_ITERS_RESUME)  # test iter
-# test_submission()
+# test_submission(args)
